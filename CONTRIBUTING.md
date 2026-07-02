@@ -43,6 +43,15 @@ putting `src/` on `sys.path` so the plain test suite never depends on install
 mechanics at all. If imports break after toolchain changes, look at the
 `.pth` files in `site-packages` first; this was debugged twice already.
 
+## Known noise: aiosqlite teardown warnings
+
+Some tests emit "Event loop is closed" /
+`PytestUnhandledThreadExceptionWarning` during teardown (aiosqlite's worker
+thread outliving the per-test event loop because test helpers create engines
+inline without a dispose hook). It is cleanup noise, not a failure — no test
+outcome depends on it. A proper fix means threading `engine.dispose()`
+through every inline helper; tracked as low-priority cleanup.
+
 ## Supported Python versions
 
 The package claims 3.11–3.13 (classifiers). The CI matrix over

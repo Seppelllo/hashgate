@@ -19,6 +19,12 @@ _GIT_ENV = {
     "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
     "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
     "HOME": "/tmp",
+    # adversarial default: ubuntu-latest resolves init.defaultBranch to
+    # master under isolated config while Apple Git defaults to main —
+    # pin the CI-like value so macOS runs exercise the same case as CI
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "init.defaultBranch",
+    "GIT_CONFIG_VALUE_0": "master",
 }
 
 
@@ -88,9 +94,15 @@ async def test_validate_refuses_kind_mismatch(repo) -> None:
 
 @pytest.fixture
 def repo_with_remote(repo, tmp_path):
+    # -b main is load-bearing: without it the bare repo's HEAD follows the
+    # environment's init.defaultBranch (Apple Git: main; Ubuntu: master).
+    # With a master HEAD, a clone starts on an unborn master, the "foreign"
+    # commit becomes a root commit there, and its push creates
+    # refs/heads/master instead of moving main — the exact CI-only failure
+    # this fixture once had.
     remote = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "--bare", str(remote)], check=True,
-                   capture_output=True, env=_GIT_ENV)
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)],
+                   check=True, capture_output=True, env=_GIT_ENV)
     _git(repo, "remote", "add", "origin", str(remote))
     _git(repo, "push", "-u", "origin", "main")
     return repo, remote
@@ -118,13 +130,13 @@ async def test_moved_remote_changes_the_hash(repo_with_remote, tmp_path) -> None
     ctx = GitCommandContext(cwd=str(repo), command="git push")
     h1 = canonical_hash(await action.derive(ctx))
     clone = tmp_path / "clone"
-    subprocess.run(["git", "clone", str(remote), str(clone)], check=True,
-                   capture_output=True, env=_GIT_ENV)
+    subprocess.run(["git", "clone", "--branch", "main", str(remote), str(clone)],
+                   check=True, capture_output=True, env=_GIT_ENV)
     subprocess.run(["git", "-C", str(clone), "commit", "--allow-empty",
                     "-m", "someone else"], check=True, capture_output=True,
                    env=_GIT_ENV)
-    subprocess.run(["git", "-C", str(clone), "push"], check=True,
-                   capture_output=True, env=_GIT_ENV)
+    subprocess.run(["git", "-C", str(clone), "push", "origin", "main"],
+                   check=True, capture_output=True, env=_GIT_ENV)
     _git(repo, "fetch", "origin")  # remote-tracking ref moves
     h2 = canonical_hash(await action.derive(ctx))
     assert h1 != h2

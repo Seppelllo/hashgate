@@ -26,6 +26,12 @@ _GIT_ENV = {
     "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
     "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
     "HOME": "/tmp",
+    # adversarial default: ubuntu-latest resolves init.defaultBranch to
+    # master under isolated config while Apple Git defaults to main —
+    # pin the CI-like value so macOS runs exercise the same case as CI
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "init.defaultBranch",
+    "GIT_CONFIG_VALUE_0": "master",
 }
 
 
