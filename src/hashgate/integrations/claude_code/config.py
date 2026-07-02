@@ -29,6 +29,11 @@ DEFAULT_DB_PATH = "~/.hashgate/hooks.db"
 DEFAULT_TTL_SECONDS = 900
 DEFAULT_PORT = 8377
 
+class GateConfigError(Exception):
+    """The shared config file is unreadable/invalid — carried as a clean
+    error (with file name and hint) instead of a raw parser traceback."""
+
+
 _ENV_NAMES = {
     "db": "HASHGATE_DB",
     "ttl_seconds": "HASHGATE_TTL_SECONDS",
@@ -77,8 +82,17 @@ def load_config(config_path: str | None = None,
     file_values: dict[str, object] = {}
     file_used: str | None = None
     if path.is_file():
-        with path.open("rb") as fh:
-            file_values = tomllib.load(fh)
+        try:
+            with path.open("rb") as fh:
+                file_values = tomllib.load(fh)
+        except tomllib.TOMLDecodeError as exc:
+            raise GateConfigError(
+                f"invalid TOML in {path}: {exc}\n"
+                'hint: string values need quotes, e.g. token = "abc123" — '
+                "an unquoted token/operator_token is the usual cause"
+            ) from exc
+        except OSError as exc:
+            raise GateConfigError(f"cannot read {path}: {exc}") from exc
         file_used = str(path)
 
     def pick(field: str, default):

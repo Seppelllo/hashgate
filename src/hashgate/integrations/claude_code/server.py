@@ -311,6 +311,8 @@ async def _create_pending_preview(
 def main() -> None:  # pragma: no cover — thin uvicorn launcher
     import sys
 
+    from hashgate.integrations.claude_code.config import GateConfigError
+
     if _IMPORT_ERROR is not None:
         print(_EXTRA_HINT, file=sys.stderr)
         sys.exit(1)
@@ -319,7 +321,11 @@ def main() -> None:  # pragma: no cover — thin uvicorn launcher
     except ModuleNotFoundError:
         print(_EXTRA_HINT, file=sys.stderr)
         sys.exit(1)
-    config = load_config()
+    try:
+        config = load_config()
+    except GateConfigError as exc:
+        print(f"hashgate-hook-server: {exc}", file=sys.stderr)
+        sys.exit(1)
     print(f"hashgate-hook-server effective config: {config.summary()}", flush=True)
     uvicorn.run(create_app(config), host="127.0.0.1", port=config.port)
 

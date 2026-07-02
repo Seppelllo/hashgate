@@ -33,6 +33,31 @@ _GIT_ENV = {
 }
 
 
+def test_invalid_toml_is_a_clean_error_with_hint(tmp_path) -> None:
+    # field finding: an unquoted token value crashed the server with a raw
+    # tomllib traceback — now a clean error naming file, problem and hint
+    import pytest
+
+    from hashgate.integrations.claude_code.config import GateConfigError
+    config = tmp_path / "config.toml"
+    config.write_text("operator_token = 29f0ae922d290ebc02ef46bef1124411\n")
+    with pytest.raises(GateConfigError) as exc:
+        load_config(config_path=str(config), env={})
+    message = str(exc.value)
+    assert str(config) in message
+    assert "string values need quotes" in message
+
+
+def test_invalid_toml_cli_dies_friendly(tmp_path) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text("token = abc\n")
+    proc = _cli(["pending"], str(tmp_path / "hooks.db"),
+                {"HASHGATE_CONFIG": str(config)})
+    assert proc.returncode == 1
+    assert "invalid TOML" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
 def test_defaults_without_file_or_env() -> None:
     cfg = load_config(config_path="/nonexistent/config.toml", env={})
     assert cfg.ttl_seconds == 900

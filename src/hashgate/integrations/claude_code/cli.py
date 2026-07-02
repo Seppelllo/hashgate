@@ -30,7 +30,11 @@ from pathlib import Path
 
 from hashgate.errors import EvidenceNotFound
 from hashgate.evidence import EvidenceExporter
-from hashgate.integrations.claude_code.config import GateConfig, load_config
+from hashgate.integrations.claude_code.config import (
+    GateConfig,
+    GateConfigError,
+    load_config,
+)
 from hashgate.integrations.claude_code.render import age, expiry, local_time, summary_lines
 
 # The console script is installed even without the 'server' extra; die with
@@ -337,7 +341,11 @@ def main(argv: list[str] | None = None) -> None:
         print(_EXTRA_HINT, file=sys.stderr)
         sys.exit(1)
     args = build_parser().parse_args(argv)
-    sys.exit(asyncio.run(_COMMANDS[args.command](args)))
+    try:
+        sys.exit(asyncio.run(_COMMANDS[args.command](args)))
+    except GateConfigError as exc:
+        print(f"hashgate: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
