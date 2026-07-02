@@ -51,6 +51,7 @@ try:
     from hashgate.integrations.claude_code.approvals import (
         DECISION_APPROVED,
         DECISION_DENIED,
+        DECISION_DENIED_FINAL,
         ApprovalService,
         ClaudeCodeBase,
         HookApprovalRow,
@@ -183,6 +184,13 @@ def create_app(config: GateConfig | None = None) -> FastAPI:
 
         approval = await state.approvals.latest_for_hash(action.action_type, payload_hash)
 
+        if approval is not None and approval.decision == DECISION_DENIED_FINAL:
+            return _deny(
+                f"hashgate: operator FINALLY denied this exact state "
+                f"(hash {payload_hash[:12]}…) at {approval.created_at}: "
+                f"{approval.reason}. This exact state will never be approved; "
+                "a changed state (new commit/amend/other target) is a new decision."
+            )
         if approval is not None and approval.decision == DECISION_DENIED:
             return _deny(f"hashgate: operator denied this action: {approval.reason}")
 

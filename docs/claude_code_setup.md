@@ -1,6 +1,9 @@
 # hashgate × Claude Code — setup
 
-Gate dangerous tool calls (v0.1: `git push` / `git merge` in Bash) behind a
+Gate dangerous tool calls (`git push`/`git merge`, and since v0.2:
+force-push, `git reset --hard`, recursive `rm`, plus common deploy commands —
+`kamal deploy`, `docker compose up`, `kubectl apply`, named deploy scripts —
+all in Bash) behind a
 hash-bound operator approval. The agent's call is denied until you approve it
 in your own terminal; the approval is bound to the repository's **current
 HEAD SHA and remote-tracking state**, single-use and expiring. Confirmed in
@@ -158,10 +161,17 @@ expiries); evidence bundles stay pure UTC.
 
   The gate constrains the sanctioned path; defense in depth is the
   combination of gate + permission rules + your review.
-- **Known limit (deliberate for v0.1):** after a deny, the agent's next
-  attempt creates a new pending request — by design (a deny is situational,
-  not a content ban), but spammable in principle. Roadmap candidate:
-  `hashgate deny --final` for a sticky denial.
+- **Denials: situational by default, `--final` for a sticky one.** A plain
+  deny is situational — the identical state stays denied, but the operator
+  can still approve it later, and in practice the agent's next attempt has a
+  new state and creates a new pending request. `hashgate deny <id> --reason …
+  --final` binds the denial to the exact payload hash: the identical state is
+  answered with a `denied_final` refusal forever (no new pending, no later
+  accept). Stated honestly: `--final` binds to the exact STATE, not to
+  content — an amend/rebase/new commit produces a new hash and therefore a
+  new decision. That is the promise the mechanism can actually keep (same
+  honesty as the SHA-based denied-commit warning); reliable content
+  quarantine remains `git revert`/`reset`.
 - The preview payload stores the exact command and commit subjects (that is
   what you review), so the local gate database contains raw command text.
   Evidence bundles carry hashes and metadata only.

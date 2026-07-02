@@ -8,8 +8,15 @@ from pathlib import Path
 import pytest
 
 from hashgate.integrations.claude_code.rules import (
+    KIND_DEPLOY_SCRIPT,
+    KIND_DOCKER_COMPOSE_UP,
+    KIND_GIT_FORCE_PUSH,
     KIND_GIT_MERGE,
     KIND_GIT_PUSH,
+    KIND_GIT_RESET_HARD,
+    KIND_KAMAL_DEPLOY,
+    KIND_KUBECTL_APPLY,
+    KIND_RM_RF,
     KIND_SELF_APPROVAL,
     classify,
 )
@@ -24,7 +31,6 @@ def _bash(command: str):
 @pytest.mark.parametrize("command", [
     "git push",
     "git push origin main",
-    "git push --force-with-lease origin feature",
     "git -C /some/repo push",                      # global-option bypass
     "git -c user.name=x push origin main",
     "GIT_SSH_COMMAND='ssh -i k' git push",         # env-prefixed
@@ -56,6 +62,108 @@ def test_merge_shaped_commands_are_gated(command: str) -> None:
 
 def test_push_wins_over_merge_when_both_present() -> None:
     assert _bash("git merge topic && git push").kind == KIND_GIT_PUSH
+
+
+# --- destructive git / rm (v0.2) ---------------------------------------------
+@pytest.mark.parametrize("command", [
+    "git push --force",
+    "git push --force-with-lease origin main",
+    "git push --force-with-lease=refs/heads/main origin main",
+    "git push --force-if-includes",
+    "git push -f",
+    "git push -fu origin main",              # combined short flag
+    "git -C /repo push --force",             # global-option bypass
+    "cd /x && git push -f",                  # chained
+    "sh -c 'git push --force origin main'",  # wrapped
+])
+def test_force_push_is_its_own_kind(command: str) -> None:
+    cls = _bash(command)
+    assert cls.gated and cls.kind == KIND_GIT_FORCE_PUSH, command
+
+
+def test_plain_push_stays_plain() -> None:
+    assert _bash("git push origin main").kind == KIND_GIT_PUSH
+    # long flags starting with f are NOT force flags
+    assert _bash("git push --follow-tags origin main").kind == KIND_GIT_PUSH
+    assert _bash("git push --tags").kind == KIND_GIT_PUSH
+
+
+@pytest.mark.parametrize("command", [
+    "git reset --hard",
+    "git reset --hard HEAD~3",
+    "git reset --hard origin/main",
+    "git -C /repo reset --hard abc123",
+    "a && git reset --hard",
+    "sh -c 'git reset --hard HEAD~1'",
+])
+def test_reset_hard_is_gated(command: str) -> None:
+    cls = _bash(command)
+    assert cls.gated and cls.kind == KIND_GIT_RESET_HARD, command
+
+
+def test_soft_and_mixed_reset_are_not_gated() -> None:
+    assert _bash("git reset --soft HEAD~1").gated is False
+    assert _bash("git reset HEAD~1").gated is False
+
+
+@pytest.mark.parametrize("command", [
+    "rm -rf build/",
+    "rm -fr /tmp/x",
+    "rm -r dist",
+    "rm -Rf node_modules",
+    "rm --recursive --force x",
+    "a && rm -rf out",
+    "sh -c 'rm -rf $HOME/x'",
+    "/bin/rm -rf y",
+])
+def test_recursive_rm_is_gated(command: str) -> None:
+    cls = _bash(command)
+    assert cls.gated and cls.kind == KIND_RM_RF, command
+
+
+def test_single_file_rm_is_not_gated() -> None:
+    assert _bash("rm file.txt").gated is False
+    assert _bash("rm -f file.txt").gated is False  # not recursive
+
+
+# --- deploy commands (v0.2) -----------------------------------------------------
+@pytest.mark.parametrize("command,kind", [
+    ("kamal deploy", KIND_KAMAL_DEPLOY),
+    ("kamal redeploy", KIND_KAMAL_DEPLOY),
+    ("kamal deploy -d staging", KIND_KAMAL_DEPLOY),
+    ("cd app && kamal deploy", KIND_KAMAL_DEPLOY),
+    ("docker compose up -d", KIND_DOCKER_COMPOSE_UP),
+    ("docker-compose up", KIND_DOCKER_COMPOSE_UP),
+    ("docker compose -f prod.yml up -d web", KIND_DOCKER_COMPOSE_UP),
+    ("kubectl apply -f k8s/", KIND_KUBECTL_APPLY),
+    ("kubectl --context prod apply -f app.yaml", KIND_KUBECTL_APPLY),
+    ("./deploy.sh", KIND_DEPLOY_SCRIPT),
+    ("bash scripts/deploy.sh production", KIND_DEPLOY_SCRIPT),
+    ("make deploy", KIND_DEPLOY_SCRIPT),
+    ("uv run pytest && make deploy", KIND_DEPLOY_SCRIPT),
+])
+def test_deploy_commands_are_gated(command: str, kind: str) -> None:
+    cls = _bash(command)
+    assert cls.gated and cls.kind == kind, command
+
+
+@pytest.mark.parametrize("command", [
+    "docker compose ps",
+    "docker compose logs -f web",
+    "kubectl get pods",
+    "kubectl diff -f app.yaml",
+    "make test",
+    "kamal app logs",
+])
+def test_non_mutating_tool_commands_pass(command: str) -> None:
+    assert _bash(command).gated is False, command
+
+
+def test_precedence_git_wins_over_deploy_in_one_chain() -> None:
+    # one command, several gate-worthy parts: ONE kind by fixed precedence;
+    # the operator reviews the full command in the payload either way
+    assert _bash("git push && kamal deploy").kind == KIND_GIT_PUSH
+    assert _bash("rm -rf dist && make deploy").kind == KIND_RM_RF
 
 
 @pytest.mark.parametrize("command", [

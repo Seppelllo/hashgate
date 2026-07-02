@@ -26,6 +26,11 @@ from hashgate.store import Store, new_id, utcnow
 
 DECISION_APPROVED = "approved"
 DECISION_DENIED = "denied"
+#: hash-bound permanent denial: THIS exact state is never asked about again.
+#: Deliberately bound to the payload_hash, not to content — a changed state
+#: (amend/rebase/new commit) is a NEW decision, which is what the promise
+#: can actually keep. Stored as a decision value: no schema change.
+DECISION_DENIED_FINAL = "denied_final"
 
 DEFAULT_TTL_SECONDS = 900  # 15 minutes
 
@@ -86,9 +91,12 @@ class ApprovalService:
     async def decide(self, *, preview_id: str, chain_id: str | None,
                      action_type: str, payload_hash: str, decision: str,
                      operator_id: str, reason: str,
-                     ttl_seconds: int | None = None) -> HookApprovalRow:
+                     ttl_seconds: int | None = None,
+                     final: bool = False) -> HookApprovalRow:
         now = utcnow()
         ttl = self.ttl_seconds if ttl_seconds is None else int(ttl_seconds)
+        if final and decision == DECISION_DENIED:
+            decision = DECISION_DENIED_FINAL
         row = HookApprovalRow(
             id=new_id(),
             preview_id=preview_id,
@@ -106,9 +114,13 @@ class ApprovalService:
             session.add(row)
             await session.commit()
         if chain_id:
+            event_kind = {
+                DECISION_APPROVED: "operator_approved",
+                DECISION_DENIED: "operator_denied",
+                DECISION_DENIED_FINAL: "denied_final",
+            }[decision]
             await append_chain_event(
-                self._store, chain_id,
-                "operator_approved" if decision == DECISION_APPROVED else "operator_denied",
+                self._store, chain_id, event_kind,
                 action_type=action_type, channel="cli",
                 approval_id=row.id, operator_id=row.operator_id, reason=row.reason,
                 payload_hash=payload_hash, expires_at=row.expires_at,

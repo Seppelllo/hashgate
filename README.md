@@ -219,9 +219,10 @@ be bypassed by an attacker with access to the environment."
   — see the [threat model](docs/threat_model.md) and the mitigations in the
   [setup guide](docs/claude_code_setup.md).
 - The denied-commit warning is SHA-based; amend/rebase changes SHAs.
-- After a deny, the agent's next attempt creates a new pending request — by
-  design (a deny is situational, not a content ban), but spammable. Roadmap:
-  `deny --final`.
+- A plain deny is situational; `deny --final` binds a permanent refusal to
+  the exact payload hash. It is a state ban, not a content ban — an
+  amend/rebase produces a new hash and a new decision, which is what the
+  promise can actually keep.
 - Async-first API; no sync wrapper yet (added when a real sync consumer
   needs it).
 
@@ -244,9 +245,8 @@ race pin on the idempotency claim and structural source pins on the accept
 order; golden fixtures freeze the canonical format and the bundle format.
 
 Roadmap candidates: self-hosted web UI for approvals, FastAPI middleware,
-sync wrapper on demand, more gated action types beyond git push/merge,
-`deny --final`, signature implementations for bundle sealing,
-retention/export tooling.
+sync wrapper on demand, further gated action types, signature
+implementations for bundle sealing, retention/export tooling.
 
 ## Sponsoring & integration work
 

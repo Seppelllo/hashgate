@@ -47,6 +47,7 @@ try:
     from hashgate.integrations.claude_code.approvals import (
         DECISION_APPROVED,
         DECISION_DENIED,
+        DECISION_DENIED_FINAL,
         ApprovalService,
         ClaudeCodeBase,
         HookApprovalRow,
@@ -123,6 +124,8 @@ async def _outcome(store, approvals, row: PreviewRow):
     approval = await approvals.latest_for_preview(row.preview_id)
     if approval is None:
         return "pending", None, None
+    if approval.decision == DECISION_DENIED_FINAL:
+        return "denied_final", approval.created_at, approval.reason
     if approval.decision == DECISION_DENIED:
         return "denied", approval.created_at, approval.reason
     if approval.consumed_at:
@@ -163,7 +166,7 @@ async def cmd_pending(args: argparse.Namespace) -> int:
     for row in previews:
         approval = await approvals.latest_for_preview(row.preview_id)
         if approval is not None and (
-            approval.decision == DECISION_DENIED
+            approval.decision in (DECISION_DENIED, DECISION_DENIED_FINAL)
             or approval.consumed_at
             or (approval.decision == DECISION_APPROVED and not is_expired(approval))
         ):
@@ -178,6 +181,98 @@ async def cmd_pending(args: argparse.Namespace) -> int:
     return 0
 
 
+def _short(value, n: int = 12) -> str:
+    return str(value)[:n] if value else UNRESOLVED_LABEL
+
+
+UNRESOLVED_LABEL = "unresolved"
+
+
+def _summary_lines(action_type: str, payload: dict,
+                   denied_heads: dict) -> list[str]:
+    """Per-action prominent rendering: the operator sees WHAT the approval
+    would cover before the JSON dump."""
+    lines: list[str] = []
+    if action_type in ("git_push", "git_force_push"):
+        if action_type == "git_force_push":
+            lines.append(
+                f"⚠ force-push ({payload.get('force_flag')}) overwrites "
+                f"{_short(payload.get('overwrites_remote_sha'))} on "
+                f"{payload.get('remote_ref') or UNRESOLVED_LABEL}")
+        commits = payload.get("commits") or []
+        if commits:
+            flag = " (list truncated)" if payload.get("commits_truncated") else ""
+            lines.append(f"this push transports {len(commits)} commit(s){flag}:")
+            for commit in commits:
+                lines.append(f"  {commit['sha'][:12]}  {commit['subject']}")
+                if commit["sha"] in denied_heads:
+                    reason, at = denied_heads[commit["sha"]]
+                    lines.append(
+                        f"  ⚠ commit {commit['sha'][:12]} was HEAD of a denied "
+                        f"push proposal — reason: '{reason}', at {_local(at)}")
+    elif action_type == "git_reset_hard":
+        lines.append(
+            f"⚠ reset --hard discards commits down to "
+            f"{_short(payload.get('target_sha'))} (target '{payload.get('target')}'), "
+            f"current HEAD {_short(payload.get('head_sha'))}")
+        discarded = payload.get("discarded_commits")
+        if discarded is None:
+            lines.append("  discarded commits: unresolved (target did not resolve)")
+        else:
+            flag = " (list truncated)" if payload.get("discarded_commits_truncated") else ""
+            lines.append(f"  discards {len(discarded)} commit(s){flag}:")
+            for commit in discarded:
+                lines.append(f"    {commit['sha'][:12]}  {commit['subject']}")
+    elif action_type == "rm_rf":
+        paths = payload.get("paths") or []
+        flag = " (list truncated)" if payload.get("paths_truncated") else ""
+        lines.append(f"⚠ deletes {len(paths)} resolved path(s){flag}:")
+        lines.extend(f"  {p}" for p in paths)
+        for target in payload.get("targets") or []:
+            if target.get("resolved") is None:
+                lines.append(f"  ⚠ target '{target['raw']}' could not be "
+                             "resolved (shell variable/substitution)")
+        if payload.get("tracked_paths_affected"):
+            lines.append("  ⚠ affects files tracked by git")
+    elif action_type == "kamal_deploy":
+        lines.append(
+            f"deploys HEAD {_short(payload.get('head_sha'))} "
+            f"(branch {payload.get('branch')}) to destination "
+            f"{payload.get('destination') or 'default'}")
+        lines.append(
+            f"  deploy config hash: {_short(payload.get('deploy_config_hash'))}"
+            + ("" if payload.get("deploy_config_hash")
+               else "  ⚠ config/deploy.yml missing/unreadable"))
+    elif action_type == "docker_compose_up":
+        lines.append("docker compose up:")
+        for entry in payload.get("compose_files") or []:
+            lines.append(f"  file {entry['path']}: "
+                         f"hash {_short(entry.get('content_hash'))}")
+        services = payload.get("services") or []
+        lines.append(f"  services: {', '.join(services) if services else 'all'}")
+        env_hash = payload.get("env_file_hash")
+        lines.append(f"  .env hash: {_short(env_hash) if env_hash else 'no .env'}")
+    elif action_type == "kubectl_apply":
+        context = payload.get("context")
+        namespace = payload.get("namespace")
+        warn = "  ⚠ target cluster not determinable from the command" \
+            if context == UNRESOLVED_LABEL else ""
+        lines.append(f"kubectl apply → context: {context}, "
+                     f"namespace: {namespace}{warn}")
+        for manifest in payload.get("manifests") or []:
+            lines.append(f"  manifest {manifest['path']}: "
+                         f"hash {_short(manifest.get('content_hash'))}")
+    elif action_type == "deploy_script":
+        target = " (make deploy)" if payload.get("make_target") else ""
+        lines.append(
+            f"runs deploy artifact {payload.get('script')}{target}, "
+            f"hash {_short(payload.get('script_hash'))}, "
+            f"at HEAD {_short(payload.get('head_sha'))}"
+            + ("" if payload.get("script_hash")
+               else "  ⚠ artifact missing/unreadable"))
+    return lines
+
+
 async def cmd_show(args: argparse.Namespace) -> int:
     if not args.preview_id:
         return await cmd_pending(args)  # bare 'show' = what needs my decision?
@@ -189,17 +284,12 @@ async def cmd_show(args: argparse.Namespace) -> int:
         print(f"unknown preview {args.preview_id}", file=sys.stderr)
         return 1
     payload = row.payload or {}
-    commits = payload.get("commits") or []
-    if commits:
-        flag = " (list truncated)" if payload.get("commits_truncated") else ""
-        print(f"this push transports {len(commits)} commit(s){flag}:")
-        denied_heads = await _denied_head_map(sessionmaker)
-        for commit in commits:
-            print(f"  {commit['sha'][:12]}  {commit['subject']}")
-            if commit["sha"] in denied_heads:
-                reason, at = denied_heads[commit["sha"]]
-                print(f"  ⚠ commit {commit['sha'][:12]} was HEAD of a denied "
-                      f"push proposal — reason: '{reason}', at {_local(at)}")
+    denied_heads = await _denied_head_map(sessionmaker) \
+        if payload.get("commits") else {}
+    summary = _summary_lines(row.action_type, payload, denied_heads)
+    if summary:
+        for line in summary:
+            print(line)
         print()
     approval = await approvals.latest_for_preview(row.preview_id)
     print(json.dumps({
@@ -241,6 +331,11 @@ async def _decide(args: argparse.Namespace, decision: str) -> int:
     # ONE path for repeated decisions: an open approval is reported, never
     # silently re-issued (and never re-printed as if freshly approved)
     existing = await approvals.latest_for_preview(row.preview_id)
+    if existing is not None and existing.decision == DECISION_DENIED_FINAL:
+        print(f"this exact state was FINALLY denied as {existing.id} "
+              f"({existing.reason}) — a changed state (new commit/amend) "
+              "is a new decision", file=sys.stderr)
+        return 1
     if existing is not None and existing.decision == DECISION_APPROVED \
             and not existing.consumed_at and not is_expired(existing):
         print(f"preview already has an open approval {existing.id} "
@@ -253,16 +348,22 @@ async def _decide(args: argparse.Namespace, decision: str) -> int:
         print("--reason is required", file=sys.stderr)
         return 1
     _warn_if_server_db_differs(cfg, args.db)
+    final = bool(getattr(args, "final", False))
     approval = await approvals.decide(
         preview_id=row.preview_id, chain_id=row.chain_id,
         action_type=row.action_type, payload_hash=row.payload_hash,
         decision=decision, operator_id=_operator_id(), reason=reason,
         ttl_seconds=args.ttl if decision == DECISION_APPROVED else None,
+        final=final,
     )
     if decision == DECISION_APPROVED:
         print(f"approved {row.preview_id} as {approval.id} "
               f"(single-use, expires {_expiry(approval.expires_at)})")
         print("the agent can retry the command now")
+    elif final:
+        print(f"FINALLY denied {row.preview_id} as {approval.id}: {reason}")
+        print(f"this exact state (hash {row.payload_hash[:12]}…) will never "
+              "be approved; a changed state is a new decision")
     else:
         print(f"denied {row.preview_id} as {approval.id}: {reason}")
     return 0
@@ -359,6 +460,10 @@ def build_parser() -> argparse.ArgumentParser:
     deny = sub.add_parser("deny", help="deny a preview")
     deny.add_argument("preview_id")
     deny.add_argument("--reason", required=True)
+    deny.add_argument("--final", action="store_true",
+                      help="bind the denial to this exact payload hash: the "
+                           "identical state is never asked about again (a "
+                           "changed state is a new decision)")
 
     history = sub.add_parser("history", help="past previews and their outcomes")
     history.add_argument("--limit", type=int, default=20)
