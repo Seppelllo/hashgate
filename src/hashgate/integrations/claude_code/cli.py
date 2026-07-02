@@ -29,23 +29,32 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-from hashgate.adapters.sqlalchemy_store import PreviewRow, SQLAlchemyStore
-from hashgate.adapters.sqlalchemy_store import create_all as create_core_tables
 from hashgate.errors import EvidenceNotFound
 from hashgate.evidence import EvidenceExporter
-from hashgate.integrations.claude_code.approvals import (
-    DECISION_APPROVED,
-    DECISION_DENIED,
-    ApprovalService,
-    ClaudeCodeBase,
-    HookApprovalRow,
-    is_expired,
-)
 from hashgate.integrations.claude_code.config import GateConfig, load_config
 from hashgate.store import utcnow
+
+# The console script is installed even without the 'server' extra; die with
+# instructions instead of a raw ImportError traceback (checked in main()).
+_EXTRA_HINT = ("hashgate: this command requires the server extra — "
+               "install with: pip install 'hashgate[server]'")
+try:
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from hashgate.adapters.sqlalchemy_store import PreviewRow, SQLAlchemyStore
+    from hashgate.adapters.sqlalchemy_store import create_all as create_core_tables
+    from hashgate.integrations.claude_code.approvals import (
+        DECISION_APPROVED,
+        DECISION_DENIED,
+        ApprovalService,
+        ClaudeCodeBase,
+        HookApprovalRow,
+        is_expired,
+    )
+    _IMPORT_ERROR: ModuleNotFoundError | None = None
+except ModuleNotFoundError as exc:
+    _IMPORT_ERROR = exc
 
 _HASH_LEN = 64
 
@@ -372,6 +381,9 @@ _COMMANDS = {
 
 
 def main(argv: list[str] | None = None) -> None:
+    if _IMPORT_ERROR is not None:
+        print(_EXTRA_HINT, file=sys.stderr)
+        sys.exit(1)
     args = build_parser().parse_args(argv)
     sys.exit(asyncio.run(_COMMANDS[args.command](args)))
 

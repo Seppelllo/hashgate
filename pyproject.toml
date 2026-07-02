@@ -6,8 +6,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{ name = "hashgate contributors" }]
-keywords = ["ai-governance", "human-oversight", "agents", "audit", "eu-ai-act"]
+authors = [{ name = "Seppelllo", email = "spinto997@gmail.com" }]
+keywords = ["ai-governance", "human-oversight", "agents", "audit", "eu-ai-act",
+            "claude-code", "hooks"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -22,11 +23,10 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-# placeholders until the public repository exists
-Homepage = "https://github.com/TODO-owner/hashgate"
-Repository = "https://github.com/TODO-owner/hashgate"
-Documentation = "https://github.com/TODO-owner/hashgate#readme"
-Changelog = "https://github.com/TODO-owner/hashgate/releases"
+Homepage = "https://github.com/Seppelllo/hashgate"
+Repository = "https://github.com/Seppelllo/hashgate"
+Documentation = "https://github.com/Seppelllo/hashgate#readme"
+Changelog = "https://github.com/Seppelllo/hashgate/releases"
 
 [project.optional-dependencies]
 sqlalchemy = ["sqlalchemy[asyncio]>=2.0"]
@@ -55,7 +55,8 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+# >=1.27: PEP 639 license expression + license-files support
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

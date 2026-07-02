@@ -22,42 +22,44 @@ Binds to 127.0.0.1 only.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-try:
-    from fastapi import FastAPI, Request
-    from fastapi.responses import JSONResponse
-except ModuleNotFoundError as exc:  # pragma: no cover
-    raise ModuleNotFoundError(
-        "the Claude Code gate server needs the 'server' extra: "
-        "pip install 'hashgate[server]'"
-    ) from exc
-
-import asyncio
-
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-from hashgate.adapters.sqlalchemy_store import SQLAlchemyStore
-from hashgate.adapters.sqlalchemy_store import create_all as create_core_tables
 from hashgate.canonical import canonical_hash
 from hashgate.errors import AlreadyApplied, HashMismatch, ValidationFailed
 from hashgate.gate import Gate
 from hashgate.integrations.claude_code.actions import ACTIONS, GitCommandContext
-from hashgate.integrations.claude_code.approvals import (
-    DECISION_APPROVED,
-    DECISION_DENIED,
-    ApprovalService,
-    ClaudeCodeBase,
-    HookApprovalRow,
-    append_chain_event,
-    is_expired,
-)
 from hashgate.integrations.claude_code.config import GateConfig, load_config
 from hashgate.integrations.claude_code.rules import KIND_SELF_APPROVAL, classify
 from hashgate.policy import MappingPolicySource, PolicyEngine
 from hashgate.types import OperatorContext, Preview
+
+# The console script is installed even without the 'server' extra; die with
+# instructions instead of a raw ImportError traceback (checked in main() and
+# create_app()).
+_EXTRA_HINT = ("hashgate: this command requires the server extra — "
+               "install with: pip install 'hashgate[server]'")
+try:
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from hashgate.adapters.sqlalchemy_store import SQLAlchemyStore
+    from hashgate.adapters.sqlalchemy_store import create_all as create_core_tables
+    from hashgate.integrations.claude_code.approvals import (
+        DECISION_APPROVED,
+        DECISION_DENIED,
+        ApprovalService,
+        ClaudeCodeBase,
+        HookApprovalRow,
+        append_chain_event,
+        is_expired,
+    )
+    _IMPORT_ERROR: ModuleNotFoundError | None = None
+except ModuleNotFoundError as exc:
+    _IMPORT_ERROR = exc
 
 #: kept as the public name; the shared GateConfig IS the server config
 ServerConfig = GateConfig
@@ -128,6 +130,8 @@ def _agent_operator(body: dict[str, Any], session_id: str) -> OperatorContext:
 
 
 def create_app(config: GateConfig | None = None) -> FastAPI:
+    if _IMPORT_ERROR is not None:
+        raise ModuleNotFoundError(_EXTRA_HINT) from _IMPORT_ERROR
     app = FastAPI(title="hashgate Claude Code gate", docs_url=None, redoc_url=None)
     state = _State(config=config or load_config())
     app.state.hashgate = state
@@ -293,10 +297,16 @@ async def _create_pending_preview(
 
 
 def main() -> None:  # pragma: no cover — thin uvicorn launcher
+    import sys
+
+    if _IMPORT_ERROR is not None:
+        print(_EXTRA_HINT, file=sys.stderr)
+        sys.exit(1)
     try:
         import uvicorn
     except ModuleNotFoundError:
-        raise SystemExit("hashgate-hook-server needs: pip install 'hashgate[server]'") from None
+        print(_EXTRA_HINT, file=sys.stderr)
+        sys.exit(1)
     config = load_config()
     print(f"hashgate-hook-server effective config: {config.summary()}", flush=True)
     uvicorn.run(create_app(config), host="127.0.0.1", port=config.port)

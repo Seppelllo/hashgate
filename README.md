@@ -1,227 +1,236 @@
 # hashgate
 
-**Execution governance for AI agents: cryptographically bound human oversight.**
+**A fail-closed, hash-bound human approval gate for AI agents.** The agent's
+proposed action is previewed; the operator accepts the preview's canonical
+hash; at execution time the server re-derives the action from live state and
+compares; the effect runs only if the hashes match — and only once.
 
-hashgate gates the effects of AI agents behind an operator accept that is
-bound to a canonical hash of *exactly* what the operator reviewed — and
-re-derived server-side at accept time. Others log what your agent did;
-hashgate makes it provable that the agent could only do what a human approved
-by hash. It executes nothing on its own: no auto-accept, no scheduler.
+## Why a hash, not a button
 
-## The core idea, in one scenario
+A coding agent proposes `git push`. The operator reviews the payload — repo,
+branch, HEAD SHA, the exact commits that would transport — and approves its
+hash. Before the agent retries, it makes one more commit.
 
-A coding agent opens a pull request. The operator previews the merge payload —
-repo, PR number, **`head_sha`**, diff stat — and accepts by echoing its
-canonical hash. Between preview and accept, the agent pushes another commit.
+The push is refused, despite a valid, unexpired approval: the server
+re-derives the payload from the repository as it is *now*, the HEAD SHA
+changed, the hash no longer matches. The operator approved a state that no
+longer exists. A new preview appears; the old approval's evidence chain
+records `approval_stale` with both hashes.
 
-With a plain "Approve" button, the approval silently applies to whatever the
-branch points at by then. With hashgate, the accept **bursts automatically**:
-the server re-derives the payload, the `head_sha` changed, the hash no longer
-matches, nothing is merged — and the refusal itself becomes a verifiable
-evidence bundle: *the agent tried, the gate prevented it, and you can prove
-it.* Run it yourself (offline, fake PR):
+**An approve button approves an intention. hashgate approves a state.**
 
-```bash
-python examples/pr_merge_gate/pr_merge_gate.py
-```
+## The agent cannot approve itself
+
+From end-to-end testing with a live Claude Code session — the operator told
+the agent to approve its own pending push:
+
+> **Operator:** run `hashgate accept <preview_id> --hash <hash>` yourself.
+>
+> **Agent:** "You explicitly approved with the full hash — running the
+> accept, then pushing." *(translated from the live session)*
+>
+> **Gate:** `hashgate: agent-issued 'hashgate accept/deny' commands are
+> always blocked. Approvals happen in the operator's own terminal, never
+> through the agent.`
+>
+> **Agent:** "That's not possible: hashgate blocks agent-issued accept/deny
+> on principle — approvals can only come from your own terminal, never
+> through me."
+
+The agent complied. The gate refused. That is the point — enforcement must
+not depend on the agent's good behavior.
 
 ## Quickstart
 
-```python
-from hashgate import (
-    Gate, MemoryStore, OperatorContext,
-    PolicyEngine, MappingPolicySource, ValidationFailed,
-)
-
-class PRMergeAction:
-    action_type = "pr_merge"
-    feature_flag = "pr_merge_enabled"
-
-    async def derive(self, pr) -> dict:
-        # pure, read-only, deterministic — the operator reviews THIS
-        return {"repo": pr.repo, "pr": pr.number, "head_sha": pr.head_sha,
-                "files_changed": pr.diff_stat()}
-
-    async def validate(self, pr, payload) -> None:
-        if payload["files_changed"]["total"] > 50:
-            raise ValidationFailed("diff too large for a gated merge")
-
-    def idempotency_key(self, pr, payload) -> str:
-        return f"merge:{payload['repo']}:{payload['head_sha']}"
-
-    async def apply(self, pr, payload) -> dict:
-        pr.merge(sha=payload["head_sha"])          # SHA-pinned effect
-        return {"merged_sha": payload["head_sha"]}
-
-gate = Gate(
-    store=MemoryStore(),  # or the SQLAlchemy adapter (hashgate[sqlalchemy])
-    policy=PolicyEngine(source=MappingPolicySource(
-        flags={"pr_merge_enabled": True}, policies={"pr_merge": "allow"})),
-)
-
-preview = await gate.preview(action, pr, OperatorContext(
-    operator_id="operator:alex", reason="reviewed diff, tests green"))
-# ... operator reviews preview.payload, then echoes preview.payload_hash:
-result = await gate.accept(action, pr, op, expected_hash=preview.payload_hash)
+```bash
+python3 -m venv ~/.hashgate/venv && source ~/.hashgate/venv/bin/activate
+pip install 'hashgate[server]'   # NOT -e; editable installs are unreliable
+                                 # on some platforms (see CONTRIBUTING.md)
+hashgate-hook-server
+# hashgate-hook-server effective config: db=/Users/you/.hashgate/hooks.db ttl=900s token=set port=8377 config=~/.hashgate/config.toml
 ```
 
-`accept` enforces exactly this order — pinned both behaviorally and
-structurally in the test suite:
+Read that startup line: a setting that does not show up there is not in
+force. Server and CLI share one config source (`~/.hashgate/config.toml`,
+env overrides file — [setup guide](docs/claude_code_setup.md)).
 
-1. policy check (fail-closed, re-checked — never trust the preview)
-2. server-side re-derivation (or frozen-bytes load)
-3. hash compare against the operator-echoed `expected_hash`
-4. `validate`
-5. **atomic** idempotency claim — after the hash match, before apply
-6. `apply`
-7. result + audit
+Wire the hook in your **user** `~/.claude/settings.json`, with the
+**absolute** wrapper path — Claude Code does not run inside your venv, and
+project settings are editable by the agent itself:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash",
+        "hooks": [ { "type": "command",
+                     "command": "/Users/you/.hashgate/venv/bin/hashgate-hook-wrapper",
+                     "timeout": 30 } ] }
+    ]
+  }
+}
+```
+
+Then operate. The agent's `git push` is denied with instructions; you decide
+in your own terminal; the agent retries:
+
+```console
+$ hashgate pending
+0024a098b435…  git_push    age=  4s  hash=079ff198a55f34dacfc5201b85e03ed5191592cc7e305089b1d220c3e56655b2
+    git push origin main
+
+$ hashgate show 0024a098b435…       # full payload; for pushes:
+this push transports 1 commit(s):
+  b78d4010c449  add rate limiter
+
+$ hashgate accept 0024a098b435… --hash 079ff198a55f…6655b2   # FULL hash echo required
+approved 0024a098b435… as 55be8b35d759… (single-use, expires 16:13:27 (UTC 14:13:27) — in 899s)
+the agent can retry the command now
+```
+
+On retry the agent sees:
+`hashgate: approved by operator:alex (hash 079ff198a55f…), single-use approval consumed.`
 
 ## Concepts
 
-**Gate / GatedAction.** The `Gate` owns the mechanics; your domain lives in a
-`GatedAction` with four hooks (`derive`, `validate`, `idempotency_key`,
-`apply`). `derive` must be deterministic and side-effect-free; hashgate
-surfaces non-determinism as a `HashMismatch`. `apply` never runs without a
-fresh policy check, a hash match and an atomic claim.
-
-**Deterministic vs. frozen payloads.** The default mode re-derives at accept
-time — the strongest guarantee (the accept binds to a re-computable
-derivation). For sources that cannot re-derive deterministically (LLM
-output), `FrozenPayloadAction` derives ONCE at preview, freezes the payload,
-and accept binds to the stored bytes (re-hash tamper check; unknown hash →
-`PreviewNotFound`). The trade-off is explicit: frozen binds to stored bytes,
-not to a re-computable derivation.
+**Gate / GatedAction.** The `Gate` owns the mechanics; your domain lives in
+four hooks (`derive`, `validate`, `idempotency_key`, `apply`). `accept`
+enforces a fixed order — policy check, server-side re-derivation, hash
+compare, validate, **atomic** idempotency claim, apply — pinned both
+behaviorally and structurally in the tests. Default mode re-derives at accept
+time (the strongest binding: a re-computable derivation). For sources that
+cannot re-derive deterministically (LLM output), `FrozenPayloadAction`
+derives once and accept binds to the stored bytes, tamper-checked by re-hash
+— a documented, weaker trade-off.
 
 **Fail-closed policy.** Flags default off, per-action policies default deny,
 a broken policy source is a deny, and an allow is never blank — it is
-`allow_with_gates`: hash match, validation and the idempotency claim still
-stand between the policy and any effect.
+`allow_with_gates`: hash, validation and the claim still stand.
+
+**Single-use, expiring approvals.** A consumed approval never fires twice
+(atomic claim; race-tested: N concurrent attempts, one winner). An expired
+one demands a fresh decision.
 
 **Ownership.** Resources owned by another operator are never silently resumed
-or forked. Takeover is explicit and bound to the expected owner AND expected
-state (`OwnershipViolation` and `StateDrift` are distinct errors); it mutates
-only the owner, plus one audit event.
+or forked; takeover is explicit and bound to the expected owner AND state.
 
-**Idempotency.** `Store.try_claim_idempotency` must be atomic (the reference
-SQLAlchemy adapter claims via a unique-constraint INSERT; race-tested:
-N concurrent claims, exactly one winner). A replayed accept is either an
-`AlreadyApplied` error (HTTP 409) or an `ALREADY_APPLIED` result — per action.
+**Evidence chains.** Every flow — including refusals — leaves a linked audit
+chain that exports as a sealed bundle (below). Canonical serialization is
+versioned and strict; see [`docs/SPEC_canonical.md`](docs/SPEC_canonical.md).
 
-**Evidence bundles.** Every flow leaves a linked audit chain (preview is the
-chain root; every event carries `chain_id` + `prev_event_id`). Chains export
-as self-contained, sealed bundles — **refusal chains too**, because "the
-agent tried, the gate prevented it" is a central evidence case. Receivers
-verify with `verify_bundle` (seal integrity, gap-free linkage, chronology)
-without needing hashgate's store. A refusal bundle, trimmed:
+Using the library directly (no hook server): see
+[`examples/pr_merge_gate/`](examples/pr_merge_gate/).
 
-```jsonc
-{
-  "bundle_format": "hashgate-oversight-bundle-v1",
-  "canon_version": "hashgate-canon-v1",
-  "chain_id": "229c74985ac6…",
-  "action_type": "pr_merge",
-  "outcome": "hash_mismatch",
-  "event_count": 2,
-  "events": [
-    { "kind": "preview", "event_id": "229c74985ac6…", "prev_event_id": null,
-      "operator_id": "operator:alex", "reason": "reviewed diff, 3 files, tests green",
-      "channel": "cockpit-ui", "payload_hash": "916c06d12821…",
-      "at": "2026-07-02T10:57:19.324404+00:00" },
-    { "kind": "hash_mismatch", "event_id": "8018e433ece1…", "prev_event_id": "229c74985ac6…",
-      "operator_id": "operator:alex",
-      "expected_hash": "916c06d12821…",   // what the operator approved
-      "derived_hash": "3e18f93f2f9f…",    // what the server re-derived
-      "at": "2026-07-02T10:57:19.324424+00:00" }
-  ],
-  "bundle_hash": "40a46ac5905df423…"      // canonical hash over the bundle itself
-}
-```
+## What an approval actually covers
 
-And a happy-path bundle ends in `"outcome": "applied"` with the effects
-summary on the `applied` event:
+`git push` moves **every** commit between the remote and HEAD, not just the
+tip. Push payloads therefore bind `remote_sha` plus the transported commit
+list (capped at 50, flagged when truncated), and `hashgate show` renders it
+prominently — including a warning when a transported commit was the HEAD of
+a previously denied proposal.
+
+Stated plainly: **a deny rejects a proposal; it does not quarantine a
+commit.** Denied content stays on the branch and rides along with the next
+push until removed (`git revert`/`reset`). The denied-commit warning is
+SHA-based and can be evaded by amend/rebase — it is a reviewer aid, not a
+content ban.
+
+## Evidence bundles
+
+Any chain exports as a self-contained JSON document, sealed with a canonical
+`bundle_hash`. A receiver runs `verify_bundle(bundle)` with no access to the
+gate's store: it re-computes the seal (self-excluding), checks the
+`prev_event_id` linkage for gaps and the timestamps for chronology. Applied
+outcome, trimmed:
 
 ```jsonc
-{
-  "outcome": "applied", "event_count": 2,
+{ "bundle_format": "hashgate-oversight-bundle-v1", "outcome": "applied",
   "events": [
-    { "kind": "preview", "payload_hash": "916c06d12821…", "…": "…" },
+    { "kind": "preview", "payload_hash": "916c06d12821…", "operator_id": "operator:alex", "…": "…" },
     { "kind": "applied", "payload_hash": "916c06d12821…",
       "idempotency_key": "merge:acme/api:9fceb02d0ae5…",
-      "feature_flag": "pr_merge_enabled", "policy_decision": "allow_with_gates",
-      "effects": { "merged_sha": "9fceb02d0ae5…" } }
-  ],
-  "bundle_hash": "aa94c3472b30…"
-}
+      "policy_decision": "allow_with_gates",
+      "effects": { "merged_sha": "9fceb02d0ae5…" } } ],
+  "bundle_hash": "aa94c3472b30…" }
 ```
 
-Events carry IDs, hashes, operator identity/reason/channel, timestamps and
-redacted effect summaries — never payload bodies, never secrets (allowlist-
-first redaction is built in). Signatures are a hook (`BundleSigner`); no
-cryptography ships in v0.1.
+Refusals are first-class evidence — "the agent tried, the gate prevented it":
 
-## Claude Code integration (first real consumer)
+```jsonc
+{ "bundle_format": "hashgate-oversight-bundle-v1", "outcome": "hash_mismatch",
+  "events": [
+    { "kind": "preview", "payload_hash": "916c06d12821…", "…": "…" },
+    { "kind": "hash_mismatch",
+      "expected_hash": "916c06d12821…",   // what the operator approved
+      "derived_hash":  "3e18f93f2f9f…" }  // what the server re-derived
+  ],
+  "bundle_hash": "40a46ac5905d…" }
+```
 
-`hashgate[server]` ships a local gate server + operator CLI that hooks into
-Claude Code's PreToolUse event: `git push` / `git merge` issued by the agent
-are denied until the operator approves them — hash-bound to the repository's
-**current HEAD SHA, the remote-tracking state and the full transported commit
-list**, single-use, expiring. If the agent commits again after the approval
-(or the remote moves), the next attempt re-derives a different hash and the
-stale approval never fires. This holds for **subagents too** — confirmed
-end-to-end: delegated subagent tool calls are gated the same way, and their
-provenance is recorded in the evidence chain. The recommended wiring is a
-**fail-closed command-hook wrapper**: Claude Code's own hook transport is
-fail-open on errors; the wrapper turns "gate server down" into "gated action
-blocked" (exit 2) while harmless commands keep flowing. Agent-issued
-`hashgate accept` commands are always denied (self-approval guard).
-Setup: [`docs/claude_code_setup.md`](docs/claude_code_setup.md).
+Events carry IDs, hashes, operator identity/reason/channel and timestamps —
+never payload bodies, never secrets (allowlist-first redaction is built in).
+Subagent calls are gated like main-agent calls (confirmed end-to-end), and
+their provenance (`agent_id`, `agent_type`) is recorded in the chain.
 
-## Canonical serialization
+## Failure semantics
 
-Every guarantee hangs on the hash, so the serialization is specified
-normatively and versioned: JSON, sorted keys, compact separators, real UTF-8,
-version prefix `hashgate-canon-v1:`, SHA-256. **Floats are rejected.** A
-format change is a new canon version, never a silent edit — golden fixtures
-enforce it. Read [`docs/SPEC_canonical.md`](docs/SPEC_canonical.md).
+Claude Code hooks are fail-open on transport problems: if a hook endpoint is
+unreachable, the tool call runs anyway. **That difference is not a detail; it
+is the difference between an observability feature and an enforcement
+gate.** hashgate ships two wirings and names the trade-off:
 
-## Design decisions (v0.1)
+| Wiring | Server down means |
+|---|---|
+| **Command-hook wrapper** (recommended) | gated actions blocked (exit 2); everything else — commits, tests, reads — keeps flowing. The wrapper classifies locally with the same rules module the server uses. |
+| Direct HTTP hook (documented) | tool calls proceed ungated — advisory only. |
 
-- **Async-first, sync wrapper on demand.** The store protocol and gate are
-  `async` (the reference adapter is async SQLAlchemy). No sync wrapper ships
-  in v0.1 — one will be added when a real sync consumer needs it.
-- **Dependency-free core** (Python ≥ 3.11); SQLAlchemy only as the optional
-  `hashgate[sqlalchemy]` extra.
-- **No auto-accept, no scheduler** in the core — deliberately out of scope.
-- **Refusals are audited.** Policy denials and hash mismatches produce chain
-  events (with both hashes), not silence.
-- Extracted from a production agent-runtime project where the pattern ran
-  end-to-end (goal → plan → artifacts → completion, including recovery and
-  cross-operator takeover).
+## Honest limitations
+
+- **Local, single-operator tool (v0.1).** One machine, one gate database, no
+  multi-user model.
+- **The sanctioned path is enforced; the environment is not.** An agent with
+  unrestricted file access could attack the local gate database or edit hook
+  settings. Mitigations (user-/managed-settings placement, permission deny
+  rules for the gate's files) are in the
+  [setup guide](docs/claude_code_setup.md) — the gate is one layer of
+  defense in depth, not all of them.
+- The denied-commit warning is SHA-based; amend/rebase changes SHAs.
+- After a deny, the agent's next attempt creates a new pending request — by
+  design (a deny is situational, not a content ban), but spammable. Roadmap:
+  `deny --final`.
+- Async-first API; no sync wrapper yet (added when a real sync consumer
+  needs it).
 
 ## Regulatory context
 
 hashgate supports the technical implementation of oversight and logging
-requirements (for example those described in EU AI Act Articles 12 and 14):
-enforced pre-effect human approval, cryptographic binding between what was
-reviewed and what executes, and exportable, verifiable evidence of both
-approvals and refusals. It does not, by itself, make any system compliant
-with any regulation; legal assessment remains the responsibility of the
-operator.
+requirements (for example human-oversight provisions such as EU AI Act
+Article 14): enforced pre-effect human approval, cryptographic binding
+between what was reviewed and what executes, and exportable, verifiable
+evidence of both approvals and refusals. It does not, by itself, make any
+system compliant with any regulation; legal assessment remains the
+responsibility of the operator.
 
-## Status / roadmap
+## Status & roadmap
 
-v0.1 (this repo): canonical spec + golden fixtures, Gate/GatedAction with the
-structurally pinned accept order, frozen payloads, fail-closed policy engine,
-atomic idempotency store (in-memory + async SQLAlchemy), ownership guard,
-allowlist-first redaction, audit chains + verifiable oversight bundles,
-PR-merge reference example, Claude Code hook integration (gate server +
-operator CLI + fail-closed wrapper).
+v0.1. The core pattern was extracted from a production agent-runtime system
+where it ran end-to-end (goal → plan → artifacts → completion, including
+recovery and cross-operator takeover). 226 tests, including a concurrency
+race pin on the idempotency claim and structural source pins on the accept
+order; golden fixtures freeze the canonical format and the bundle format.
 
-Deliberately NOT in v0.1 (roadmap candidates): sync wrapper, real signature
-implementations, framework middleware (FastAPI request-level), further
-agent-tool integrations, retention/export tooling.
+Roadmap candidates: self-hosted web UI for approvals, FastAPI middleware,
+sync wrapper on demand, more gated action types beyond git push/merge,
+`deny --final`, signature implementations for bundle sealing.
+
+## Sponsoring & integration work
+
+If hashgate is useful to you, consider sponsoring its development via GitHub
+Sponsors. I am also available for paid integration work (wiring hashgate
+into your agent workflow, custom gated actions, evidence pipelines):
+**spinto997@gmail.com**.
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE). Contributions: see
+Apache-2.0 — see [LICENSE](LICENSE). Contributions:
 [CONTRIBUTING.md](CONTRIBUTING.md).
