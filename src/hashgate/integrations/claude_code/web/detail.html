@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}hashgate — {{ row.action_type }}{% endblock %}
+{% block content %}
+<h1>{{ row.action_type }} <span class="muted">{{ row.preview_id[:12] }}</span></h1>
+{% if ok %}<p class="flash ok">{{ ok }}</p>{% endif %}
+{% if err %}<p class="flash err">{{ err }}</p>{% endif %}
+
+<section class="card">
+  <code class="cmd big">{{ payload.get("command", "") }}</code>
+  {% if summary %}
+  <div class="summary">
+    {% for line in summary %}
+    <p class="{{ 'warn' if '⚠' in line else 'info' }}">{{ line }}</p>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <label class="hash-label">payload hash (canonical)</label>
+  <code class="hash big" id="full-hash">{{ row.payload_hash[:12] }}<span class="hash-rest">{{ row.payload_hash[12:] }}</span></code>
+  <button type="button" class="secondary" id="copy-hash">Copy hash</button>
+  <details><summary>raw payload JSON</summary><pre>{{ payload_json }}</pre></details>
+</section>
+
+{% if approval %}
+<section class="card">
+  <p><strong>decision:</strong> {{ approval.decision }}
+  {% if approval.decision == "approved" and not approval.consumed_at and not approval_expired %}
+    — open, expires {{ expiry(approval.expires_at) }}
+  {% elif approval.consumed_at %} — consumed (applied)
+  {% elif approval_expired %} — expired
+  {% endif %}
+  </p>
+  <p class="muted">{{ approval.reason }}</p>
+</section>
+{% endif %}
+
+{% if outcome in ("pending", "expired") %}
+<section class="card">
+  <h2>Approve</h2>
+  <form method="post" action="/ui/accept">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="preview_id" value="{{ row.preview_id }}">
+    <label for="hash_prefix">type the FIRST {{ prefix_len }} hex characters of
+    the hash above — the typed echo is the deliberate act</label>
+    <input id="hash_prefix" name="hash_prefix" inputmode="text"
+           autocomplete="off" spellcheck="false" pattern="[0-9a-fA-F]{{ '{' }}{{ prefix_len }}{{ '}' }}"
+           class="mono" placeholder="{{ prefix_len }} hex characters">
+    <label for="accept-reason">reason (optional)</label>
+    <input id="accept-reason" name="reason" autocomplete="off">
+    <button type="submit" class="primary">Approve (single-use)</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Deny</h2>
+  <form method="post" action="/ui/deny">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="preview_id" value="{{ row.preview_id }}">
+    <label for="deny-reason">reason (required)</label>
+    <input id="deny-reason" name="reason" autocomplete="off" required>
+    <label class="checkbox">
+      <input type="checkbox" name="final">
+      final — permanently refuse this exact state (hash-bound; a changed
+      state is a new decision, this is not a content ban)
+    </label>
+    <button type="submit" class="danger">Deny</button>
+  </form>
+</section>
+{% endif %}
+
+{% if row.chain_id %}
+<p><a href="/ui/bundle/{{ row.chain_id }}">evidence chain / bundle →</a></p>
+{% endif %}
+
+<script>
+document.getElementById("copy-hash").addEventListener("click", function () {
+  navigator.clipboard.writeText(document.getElementById("full-hash").textContent.trim());
+  this.textContent = "Copied";
+});
+</script>
+{% endblock %}

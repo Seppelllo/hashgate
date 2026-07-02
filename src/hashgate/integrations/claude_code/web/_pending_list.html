@@ -1,0 +1,20 @@
+{% if rows %}
+<ul class="pending">
+  {% for row in rows %}
+  <li>
+    <a href="/ui/preview/{{ row.preview_id }}" class="card link">
+      <div class="row-head">
+        <span class="action">{{ row.action_type }}</span>
+        <span class="age">{{ row.age }} ago</span>
+      </div>
+      <code class="cmd">{{ row.command }}</code>
+      <code class="hash">{{ row.hash[:12] }}<span class="hash-rest">{{ row.hash[12:] }}</span></code>
+      {% if row.first_warning %}<p class="warn">{{ row.first_warning }}</p>{% endif %}
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty">Nothing pending — the agent has not proposed anything that
+needs your decision.</p>
+{% endif %}

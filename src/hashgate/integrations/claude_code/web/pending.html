@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}hashgate — pending{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Pending decisions</h1>
+  <button id="pause" class="secondary" type="button">Pause refresh</button>
+</div>
+<div id="pending">{% include "_pending_list.html" %}</div>
+<script>
+(function () {
+  var paused = false;
+  var button = document.getElementById("pause");
+  button.addEventListener("click", function () {
+    paused = !paused;
+    button.textContent = paused ? "Resume refresh" : "Pause refresh";
+  });
+  setInterval(function () {
+    if (paused) return;
+    fetch("/ui/partial/pending").then(function (r) {
+      if (r.ok) return r.text();
+    }).then(function (html) {
+      if (html) document.getElementById("pending").innerHTML = html;
+    }).catch(function () {});
+  }, 5000);
+})();
+</script>
+{% endblock %}

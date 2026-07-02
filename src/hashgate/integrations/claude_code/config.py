@@ -33,6 +33,7 @@ _ENV_NAMES = {
     "db": "HASHGATE_DB",
     "ttl_seconds": "HASHGATE_TTL_SECONDS",
     "token": "HASHGATE_TOKEN",
+    "operator_token": "HASHGATE_OPERATOR_TOKEN",
     "port": "HASHGATE_PORT",
 }
 
@@ -42,6 +43,12 @@ class GateConfig:
     db_path: str = DEFAULT_DB_PATH
     ttl_seconds: int = DEFAULT_TTL_SECONDS
     token: str | None = None
+    #: SEPARATE secret for the operator UI. The hook token lives in the
+    #: environment Claude Code hands to the wrapper — from the agent's point
+    #: of view it is potentially readable, so it must never authorize
+    #: operator decisions. This one is never needed in the agent/hook
+    #: environment and must never appear there.
+    operator_token: str | None = None
     port: int = DEFAULT_PORT
     config_path: str | None = None  # where the file values came from (display)
 
@@ -54,8 +61,9 @@ class GateConfig:
         must be able to SEE what is in force."""
         return (
             f"db={self.resolved_db_path} ttl={self.ttl_seconds}s "
-            f"token={'set' if self.token else 'unset'} port={self.port} "
-            f"config={self.config_path or '(no file)'}"
+            f"token={'set' if self.token else 'unset'} "
+            f"operator_token={'set' if self.operator_token else 'unset'} "
+            f"port={self.port} config={self.config_path or '(no file)'}"
         )
 
 
@@ -86,6 +94,8 @@ def load_config(config_path: str | None = None,
         db_path=str(pick("db", DEFAULT_DB_PATH)),
         ttl_seconds=int(pick("ttl_seconds", DEFAULT_TTL_SECONDS)),
         token=(lambda t: str(t) if t else None)(pick("token", None)),
+        operator_token=(lambda t: str(t) if t else None)(
+            pick("operator_token", None)),
         port=int(pick("port", DEFAULT_PORT)),
         config_path=file_used,
     )

@@ -56,6 +56,7 @@ gate on the sanctioned path itself.
 | Deleting the gate database | Same placement + deny rules; a missing DB stops approvals from existing, so gated actions deny — but history is lost (see evidence section) |
 | Rewriting SHAs (`commit --amend`, rebase) so a denied commit no longer matches the denied-commit warning | The warning is SHA-based and advisory by design; reliable quarantine of rejected content is `git revert`/`reset`. The rewritten state still needs a fresh approval — content review is the operator's job at `hashgate show` |
 | Self-approval via the agent's own shell (`hashgate accept …`) | Blocked at the rules layer (always-deny, command-position matching); this is a speed bump against adversary 2, not a boundary against adversary 3 |
+| Self-approval via the operator web UI (`curl http://127.0.0.1:…/ui/accept`) — the agent knows preview id and hash from its own deny reason | All `/ui` routes (read-only included) require the SEPARATE `operator_token`, which is never present in the agent/hook environment; the hook token never authorizes UI routes (pinned by test). Protection assumptions: the operator token stays out of the agent's environment, and the deny rules above keep the agent away from `~/.hashgate/**` — which covers `config.toml`, where both tokens live. Against adversary 2 this holds (it follows instructions, it does not exfiltrate secrets it cannot read); against adversary 3 the usual environment caveat applies |
 
 ## What the evidence chain gives you under compromise — and what it does not
 

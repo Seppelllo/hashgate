@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}hashgate — bundle{% endblock %}
+{% block content %}
+<h1>Evidence chain <span class="muted">{{ chain_id[:12] }}</span></h1>
+<p><strong>outcome:</strong> {{ bundle.outcome }} ·
+   <strong>events:</strong> {{ bundle.event_count }} ·
+   <strong>bundle hash:</strong> <code class="hash">{{ bundle.bundle_hash[:16] }}…</code></p>
+<a class="primary button" href="/ui/bundle/{{ chain_id }}?download=1">Download bundle JSON</a>
+<ol class="timeline">
+  {% for e in events %}
+  <li class="card">
+    <div class="row-head">
+      <span class="action">{{ e.kind }}</span>
+      <span class="age">{{ local_time(e.at) }}</span>
+    </div>
+    <p class="muted">{{ e.operator_id }} · {{ e.channel }}</p>
+    {% if e.payload_hash %}<code class="hash">{{ e.payload_hash[:16] }}…</code>{% endif %}
+    {% if e.expected_hash %}<p class="warn">expected {{ e.expected_hash[:12] }}… /
+      derived {{ e.derived_hash[:12] }}…</p>{% endif %}
+    {% if e.reason %}<p>{{ e.reason }}</p>{% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% endblock %}

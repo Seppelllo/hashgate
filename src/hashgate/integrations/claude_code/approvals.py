@@ -92,7 +92,8 @@ class ApprovalService:
                      action_type: str, payload_hash: str, decision: str,
                      operator_id: str, reason: str,
                      ttl_seconds: int | None = None,
-                     final: bool = False) -> HookApprovalRow:
+                     final: bool = False,
+                     channel: str = "cli") -> HookApprovalRow:
         now = utcnow()
         ttl = self.ttl_seconds if ttl_seconds is None else int(ttl_seconds)
         if final and decision == DECISION_DENIED:
@@ -121,7 +122,7 @@ class ApprovalService:
             }[decision]
             await append_chain_event(
                 self._store, chain_id, event_kind,
-                action_type=action_type, channel="cli",
+                action_type=action_type, channel=channel,
                 approval_id=row.id, operator_id=row.operator_id, reason=row.reason,
                 payload_hash=payload_hash, expires_at=row.expires_at,
             )
@@ -175,3 +176,44 @@ class ApprovalService:
             )
             await session.commit()
             return result.rowcount == 1
+
+
+# --- shared operator queries (CLI + web UI render from the same truth) --------
+async def denied_head_map(sessionmaker: async_sessionmaker) -> dict[str, tuple[str, str]]:
+    """head_sha of previously DENIED push proposals -> (reason, decided_at)."""
+    from hashgate.adapters.sqlalchemy_store import PreviewRow
+
+    async with sessionmaker() as session:
+        denied = (await session.execute(
+            select(HookApprovalRow)
+            .where(HookApprovalRow.decision.in_(
+                (DECISION_DENIED, DECISION_DENIED_FINAL))))).scalars().all()
+        result: dict[str, tuple[str, str]] = {}
+        for approval in denied:
+            preview = await session.get(PreviewRow, approval.preview_id)
+            head = ((preview.payload or {}).get("head_sha")
+                    if preview is not None else None)
+            if head:
+                result[head] = (approval.reason, approval.created_at)
+    return result
+
+
+async def outcome_for_preview(store: Store, approvals: ApprovalService,
+                              row) -> tuple[str, str | None, str | None]:
+    """(outcome, decided_at, deny_reason) for one preview row."""
+    approval = await approvals.latest_for_preview(row.preview_id)
+    if approval is None:
+        return "pending", None, None
+    if approval.decision == DECISION_DENIED_FINAL:
+        return "denied_final", approval.created_at, approval.reason
+    if approval.decision == DECISION_DENIED:
+        return "denied", approval.created_at, approval.reason
+    if approval.consumed_at:
+        return "applied", approval.consumed_at, None
+    if is_expired(approval):
+        return "expired", approval.created_at, None
+    if row.chain_id:
+        events = await store.list_chain_events(row.chain_id)
+        if any(e.get("kind") == "approval_stale" for e in events):
+            return "stale", approval.created_at, None
+    return "approved", approval.created_at, None

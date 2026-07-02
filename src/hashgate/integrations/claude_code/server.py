@@ -58,6 +58,7 @@ try:
         append_chain_event,
         is_expired,
     )
+    from hashgate.integrations.claude_code.ui import register_ui
     _IMPORT_ERROR: ModuleNotFoundError | None = None
 except ModuleNotFoundError as exc:
     _IMPORT_ERROR = exc
@@ -72,6 +73,7 @@ class _State:
     store: SQLAlchemyStore | None = None
     gate: Gate | None = None
     approvals: ApprovalService | None = None
+    sessionmaker: Any = None
     _initialized: bool = False
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -86,6 +88,7 @@ class _State:
             async with engine.begin() as conn:
                 await conn.run_sync(ClaudeCodeBase.metadata.create_all)
             sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+            self.sessionmaker = sessionmaker
             self.store = SQLAlchemyStore(sessionmaker)
             # the server exists to gate exactly these actions — its engine
             # enables them; everything unknown stays deny by default
@@ -255,6 +258,7 @@ def create_app(config: GateConfig | None = None) -> FastAPI:
             f"Retry this command after approval."
         )
 
+    register_ui(app, state)  # operator web UI under /ui (separate token)
     return app
 
 

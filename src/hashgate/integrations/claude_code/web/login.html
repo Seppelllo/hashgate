@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}hashgate — login{% endblock %}
+{% block content %}
+<h1>Operator login</h1>
+{% if error %}<p class="flash err">{{ error }}</p>{% endif %}
+<form method="post" action="/ui/login" class="card">
+  <label for="token">operator token</label>
+  <input id="token" name="token" type="password" autocomplete="off" autofocus>
+  <button type="submit" class="primary">Sign in</button>
+  <p class="hint">This is the <code>operator_token</code> from
+  <code>~/.hashgate/config.toml</code> — a separate secret from the hook
+  token, never present in the agent's environment.</p>
+</form>
+{% endblock %}

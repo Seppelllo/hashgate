@@ -9,11 +9,11 @@ both point at the same database and warns on divergence.
 
 The accept requires the FULL payload hash as an explicit echo argument — a
 blind ``accept <id>`` does not exist by design: the echo is the operator's
-cryptographic statement of what they reviewed.
+cryptographic statement of what they reviewed. (The web UI uses a typed
+12-hex prefix instead; the CLI keeps the full hash.)
 
-Operator-facing times are shown in LOCAL time with UTC in brackets (and a
-countdown for expiries). Evidence bundles and audit events stay pure UTC —
-proofs are timezone-proof and are not touched.
+Presentation (summary warnings, times, outcomes) is shared with the web UI
+via ``render.py``/``approvals.py`` — one truth for what the operator sees.
 """
 from __future__ import annotations
 
@@ -26,13 +26,12 @@ import os
 import re
 import sys
 import urllib.request
-from datetime import UTC, datetime
 from pathlib import Path
 
 from hashgate.errors import EvidenceNotFound
 from hashgate.evidence import EvidenceExporter
 from hashgate.integrations.claude_code.config import GateConfig, load_config
-from hashgate.store import utcnow
+from hashgate.integrations.claude_code.render import age, expiry, local_time, summary_lines
 
 # The console script is installed even without the 'server' extra; die with
 # instructions instead of a raw ImportError traceback (checked in main()).
@@ -50,8 +49,9 @@ try:
         DECISION_DENIED_FINAL,
         ApprovalService,
         ClaudeCodeBase,
-        HookApprovalRow,
+        denied_head_map,
         is_expired,
+        outcome_for_preview,
     )
     _IMPORT_ERROR: ModuleNotFoundError | None = None
 except ModuleNotFoundError as exc:
@@ -93,68 +93,6 @@ def _warn_if_server_db_differs(cfg: GateConfig, db_override: str | None) -> None
               "Check HASHGATE_DB / config.toml.", file=sys.stderr)
 
 
-# --- time rendering (operator-facing: local + UTC + countdown) ----------------
-def _local(iso: str | None) -> str:
-    if not iso:
-        return "-"
-    dt = datetime.fromisoformat(iso)
-    local = dt.astimezone()
-    return f"{local.strftime('%Y-%m-%d %H:%M:%S')} (UTC {dt.astimezone(UTC).strftime('%H:%M:%S')})"
-
-
-def _expiry(iso: str | None) -> str:
-    if not iso:
-        return "-"
-    remaining = int((datetime.fromisoformat(iso) - utcnow()).total_seconds())
-    suffix = f" — in {remaining}s" if remaining > 0 else " — EXPIRED"
-    return _local(iso) + suffix
-
-
-def _age(iso: str) -> str:
-    try:
-        seconds = int((utcnow() - datetime.fromisoformat(iso)).total_seconds())
-    except ValueError:
-        return "?"
-    return f"{seconds}s" if seconds < 120 else f"{seconds // 60}m"
-
-
-# --- outcome classification (history) -----------------------------------------
-async def _outcome(store, approvals, row: PreviewRow):
-    """(outcome, decided_at, deny_reason) for one preview."""
-    approval = await approvals.latest_for_preview(row.preview_id)
-    if approval is None:
-        return "pending", None, None
-    if approval.decision == DECISION_DENIED_FINAL:
-        return "denied_final", approval.created_at, approval.reason
-    if approval.decision == DECISION_DENIED:
-        return "denied", approval.created_at, approval.reason
-    if approval.consumed_at:
-        return "applied", approval.consumed_at, None
-    if is_expired(approval):
-        return "expired", approval.created_at, None
-    if row.chain_id:
-        events = await store.list_chain_events(row.chain_id)
-        if any(e.get("kind") == "approval_stale" for e in events):
-            return "stale", approval.created_at, None
-    return "approved", approval.created_at, None
-
-
-async def _denied_head_map(sessionmaker) -> dict[str, tuple[str, str]]:
-    """head_sha of previously DENIED push proposals -> (reason, decided_at)."""
-    async with sessionmaker() as session:
-        denied = (await session.execute(
-            select(HookApprovalRow)
-            .where(HookApprovalRow.decision == DECISION_DENIED))).scalars().all()
-        result: dict[str, tuple[str, str]] = {}
-        for approval in denied:
-            preview = await session.get(PreviewRow, approval.preview_id)
-            head = ((preview.payload or {}).get("head_sha")
-                    if preview is not None else None)
-            if head:
-                result[head] = (approval.reason, approval.created_at)
-    return result
-
-
 # --- commands -------------------------------------------------------------------
 async def cmd_pending(args: argparse.Namespace) -> int:
     cfg = load_config()
@@ -173,104 +111,12 @@ async def cmd_pending(args: argparse.Namespace) -> int:
             continue  # decided/consumed/currently-approved -> not pending
         shown += 1
         command = (row.payload or {}).get("command", "")
-        print(f"{row.preview_id}  {row.action_type:10s}  age={_age(row.derived_at):>4s}  "
+        print(f"{row.preview_id}  {row.action_type:10s}  age={age(row.derived_at):>4s}  "
               f"hash={row.payload_hash}")
         print(f"    {command}")
     if shown == 0:
         print("no pending previews")
     return 0
-
-
-def _short(value, n: int = 12) -> str:
-    return str(value)[:n] if value else UNRESOLVED_LABEL
-
-
-UNRESOLVED_LABEL = "unresolved"
-
-
-def _summary_lines(action_type: str, payload: dict,
-                   denied_heads: dict) -> list[str]:
-    """Per-action prominent rendering: the operator sees WHAT the approval
-    would cover before the JSON dump."""
-    lines: list[str] = []
-    if action_type in ("git_push", "git_force_push"):
-        if action_type == "git_force_push":
-            lines.append(
-                f"⚠ force-push ({payload.get('force_flag')}) overwrites "
-                f"{_short(payload.get('overwrites_remote_sha'))} on "
-                f"{payload.get('remote_ref') or UNRESOLVED_LABEL}")
-        commits = payload.get("commits") or []
-        if commits:
-            flag = " (list truncated)" if payload.get("commits_truncated") else ""
-            lines.append(f"this push transports {len(commits)} commit(s){flag}:")
-            for commit in commits:
-                lines.append(f"  {commit['sha'][:12]}  {commit['subject']}")
-                if commit["sha"] in denied_heads:
-                    reason, at = denied_heads[commit["sha"]]
-                    lines.append(
-                        f"  ⚠ commit {commit['sha'][:12]} was HEAD of a denied "
-                        f"push proposal — reason: '{reason}', at {_local(at)}")
-    elif action_type == "git_reset_hard":
-        lines.append(
-            f"⚠ reset --hard discards commits down to "
-            f"{_short(payload.get('target_sha'))} (target '{payload.get('target')}'), "
-            f"current HEAD {_short(payload.get('head_sha'))}")
-        discarded = payload.get("discarded_commits")
-        if discarded is None:
-            lines.append("  discarded commits: unresolved (target did not resolve)")
-        else:
-            flag = " (list truncated)" if payload.get("discarded_commits_truncated") else ""
-            lines.append(f"  discards {len(discarded)} commit(s){flag}:")
-            for commit in discarded:
-                lines.append(f"    {commit['sha'][:12]}  {commit['subject']}")
-    elif action_type == "rm_rf":
-        paths = payload.get("paths") or []
-        flag = " (list truncated)" if payload.get("paths_truncated") else ""
-        lines.append(f"⚠ deletes {len(paths)} resolved path(s){flag}:")
-        lines.extend(f"  {p}" for p in paths)
-        for target in payload.get("targets") or []:
-            if target.get("resolved") is None:
-                lines.append(f"  ⚠ target '{target['raw']}' could not be "
-                             "resolved (shell variable/substitution)")
-        if payload.get("tracked_paths_affected"):
-            lines.append("  ⚠ affects files tracked by git")
-    elif action_type == "kamal_deploy":
-        lines.append(
-            f"deploys HEAD {_short(payload.get('head_sha'))} "
-            f"(branch {payload.get('branch')}) to destination "
-            f"{payload.get('destination') or 'default'}")
-        lines.append(
-            f"  deploy config hash: {_short(payload.get('deploy_config_hash'))}"
-            + ("" if payload.get("deploy_config_hash")
-               else "  ⚠ config/deploy.yml missing/unreadable"))
-    elif action_type == "docker_compose_up":
-        lines.append("docker compose up:")
-        for entry in payload.get("compose_files") or []:
-            lines.append(f"  file {entry['path']}: "
-                         f"hash {_short(entry.get('content_hash'))}")
-        services = payload.get("services") or []
-        lines.append(f"  services: {', '.join(services) if services else 'all'}")
-        env_hash = payload.get("env_file_hash")
-        lines.append(f"  .env hash: {_short(env_hash) if env_hash else 'no .env'}")
-    elif action_type == "kubectl_apply":
-        context = payload.get("context")
-        namespace = payload.get("namespace")
-        warn = "  ⚠ target cluster not determinable from the command" \
-            if context == UNRESOLVED_LABEL else ""
-        lines.append(f"kubectl apply → context: {context}, "
-                     f"namespace: {namespace}{warn}")
-        for manifest in payload.get("manifests") or []:
-            lines.append(f"  manifest {manifest['path']}: "
-                         f"hash {_short(manifest.get('content_hash'))}")
-    elif action_type == "deploy_script":
-        target = " (make deploy)" if payload.get("make_target") else ""
-        lines.append(
-            f"runs deploy artifact {payload.get('script')}{target}, "
-            f"hash {_short(payload.get('script_hash'))}, "
-            f"at HEAD {_short(payload.get('head_sha'))}"
-            + ("" if payload.get("script_hash")
-               else "  ⚠ artifact missing/unreadable"))
-    return lines
 
 
 async def cmd_show(args: argparse.Namespace) -> int:
@@ -284,9 +130,9 @@ async def cmd_show(args: argparse.Namespace) -> int:
         print(f"unknown preview {args.preview_id}", file=sys.stderr)
         return 1
     payload = row.payload or {}
-    denied_heads = await _denied_head_map(sessionmaker) \
+    denied_heads = await denied_head_map(sessionmaker) \
         if payload.get("commits") else {}
-    summary = _summary_lines(row.action_type, payload, denied_heads)
+    summary = summary_lines(row.action_type, payload, denied_heads)
     if summary:
         for line in summary:
             print(line)
@@ -339,7 +185,7 @@ async def _decide(args: argparse.Namespace, decision: str) -> int:
     if existing is not None and existing.decision == DECISION_APPROVED \
             and not existing.consumed_at and not is_expired(existing):
         print(f"preview already has an open approval {existing.id} "
-              f"(expires {_expiry(existing.expires_at)}).")
+              f"(expires {expiry(existing.expires_at)}).")
         print("the agent can retry the command now")
         return 0  # idempotent: nothing changed, nothing re-issued
     reason = args.reason or (
@@ -358,7 +204,7 @@ async def _decide(args: argparse.Namespace, decision: str) -> int:
     )
     if decision == DECISION_APPROVED:
         print(f"approved {row.preview_id} as {approval.id} "
-              f"(single-use, expires {_expiry(approval.expires_at)})")
+              f"(single-use, expires {expiry(approval.expires_at)})")
         print("the agent can retry the command now")
     elif final:
         print(f"FINALLY denied {row.preview_id} as {approval.id}: {reason}")
@@ -388,10 +234,11 @@ async def cmd_history(args: argparse.Namespace) -> int:
         print("no previews recorded")
         return 0
     for row in previews:
-        outcome, decided_at, deny_reason = await _outcome(store, approvals, row)
+        outcome, decided_at, deny_reason = await outcome_for_preview(
+            store, approvals, row)
         head = str((row.payload or {}).get("head_sha") or "")[:12] or "-"
         line = (f"{row.preview_id[:12]}  {row.action_type:10s}  {outcome:8s}  "
-                f"decided={_local(decided_at)}  head={head}")
+                f"decided={local_time(decided_at)}  head={head}")
         if deny_reason:
             line += f"  reason='{deny_reason}'"
         print(line)

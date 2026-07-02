@@ -34,14 +34,24 @@ file, the file overrides the default:
 ```toml
 db = "~/.hashgate/hooks.db"
 ttl_seconds = 900        # approval lifetime; governs BOTH processes
-token = "…"              # shared secret, recommended: openssl rand -hex 16
+token = "…"              # hook<->server secret, recommended: openssl rand -hex 16
+operator_token = "…"     # SEPARATE secret for the operator UI (see below)
 port = 8377
 ```
 
 Env overrides: `HASHGATE_DB`, `HASHGATE_TTL_SECONDS`, `HASHGATE_TOKEN`,
-`HASHGATE_PORT`. Put the token in the file once instead of juggling env
-variables across terminals. The CLI additionally checks the running server's
-`/health` and warns when the two point at different databases.
+`HASHGATE_OPERATOR_TOKEN`, `HASHGATE_PORT`. Put the tokens in the file once
+instead of juggling env variables across terminals. The CLI additionally
+checks the running server's `/health` and warns when the two point at
+different databases.
+
+**Why two tokens:** the hook `token` lives in the environment Claude Code
+hands to the wrapper — from the agent's point of view it is potentially
+readable, so it must never authorize operator decisions. The
+`operator_token` protects the web UI (and its API) and is never needed in
+the agent/hook environment; keep it out of there. The deny rules in §5
+already cover `~/.hashgate/**` — that includes this config file with both
+tokens, which is exactly why those rules matter.
 
 ## 3. Wire the hook — two options with OPPOSITE failure semantics
 
@@ -107,6 +117,23 @@ hashgate bundle <chain_id|preview_id> [--out bundle.json] # evidence export
 
 Operator-facing times are local (with UTC in brackets and a countdown for
 expiries); evidence bundles stay pure UTC.
+
+### Operator web UI
+
+With `operator_token` configured, the server also serves a mobile-first web
+UI at `http://127.0.0.1:8377/ui` — pending list (auto-refresh, pausable),
+detail view with the same ⚠ warnings as the CLI, approve with a **typed
+12-hex hash echo** (you type the first 12 characters of the payload hash —
+the typed echo stays the deliberate act; the CLI keeps the full hash),
+deny with reason + `final` checkbox, history and evidence-bundle timeline
+with JSON download. Without `operator_token`, every `/ui` route answers 403
+with setup instructions (fail-closed).
+
+The server binds to `127.0.0.1` only — deliberately: the UI authenticates
+with a single token and speaks plain HTTP, so it must not face a network.
+For phone access, bring your own private transport (Tailscale/WireGuard or
+an SSH tunnel) and keep the bind address local; the threat model of the UI
+path is described in [`threat_model.md`](threat_model.md).
 
 ## 5. Semantics worth knowing
 
