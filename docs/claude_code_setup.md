@@ -135,6 +135,28 @@ For phone access, bring your own private transport (Tailscale/WireGuard or
 an SSH tunnel) and keep the bind address local; the threat model of the UI
 path is described in [`threat_model.md`](threat_model.md).
 
+Evidence provenance: decisions made in the UI carry `channel: "web-ui"` and
+`operator:web-ui` in their chain events, CLI decisions carry
+`channel: "cli"` — exported bundles show WHERE each decision was made.
+
+### What gets gated, and what each payload binds
+
+| Command shape | Payload binds |
+|---|---|
+| `git push` (incl. chained/wrapped/`-C`) | HEAD SHA, branch, remote-tracking SHA, transported commit list (cap 50) |
+| force-push (`--force`, `--force-with-lease[=ref]`, `--force-if-includes`, `-f`) | everything a push binds, plus the force flag and the remote SHA that would be overwritten |
+| `git merge` | HEAD SHA, branch, normalized command |
+| `git reset --hard [target]` | current HEAD, target (raw + resolved SHA), the commits that would be discarded; unresolvable target marked |
+| recursive `rm` (`-r`/`-rf`/`--recursive`) | resolved deletion paths (globs expanded; `$VARS` marked unresolvable), whether tracked git files are affected |
+| `kamal deploy`/`redeploy` | deployed HEAD SHA, branch, destination from the command, content hash of `config/deploy.yml` (+ destination config) |
+| `docker compose up` | content hash of the resolved compose file(s) and of `.env` if present (hashes only, never values), named services |
+| `kubectl apply -f …` | resolved manifest paths + per-manifest content hashes, context/namespace from the command (`"unresolved"` when not determinable — no cluster call is made) |
+| `./deploy.sh` / `make deploy` | content hash of the concrete deploy artifact (script/Makefile) + HEAD SHA |
+
+Classification is deliberately conservative (when in doubt, gate); one
+command chaining several gate-worthy parts yields ONE preview — you review
+the full command either way.
+
 ## 5. Semantics worth knowing
 
 - **The hook never waits for you.** It answers immediately (deny with

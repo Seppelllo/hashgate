@@ -99,6 +99,43 @@ historically tricky spots.
       gated as usual; the preview chain carries an `agent_context` event with
       agent_id/agent_type (visible in the bundle).
 
+## v0.2: operator web UI
+
+- [ ] 25. Ensure `operator_token` is set in config.toml; restart the server
+      (startup line shows `operator_token=set`). Open
+      `http://127.0.0.1:8377/ui` — login page. WRONG token first ⇒ rejected
+      ("wrong operator token"); correct token ⇒ pending list.
+- [ ] 26. With a pending push open: the browser detail view shows the SAME
+      ⚠ lines as `hashgate show` (compare directly).
+- [ ] 27. 12-hex echo: type a WRONG prefix first ⇒ "hash echo mismatch", no
+      approval; then the correct first 12 characters ⇒ approved with
+      countdown; agent retry ⇒ allow. `hashgate bundle <chain>` (or the UI
+      timeline) shows the decision with `channel: web-ui`.
+- [ ] 28. Deny with the `final` checkbox via UI; agent retry on the
+      IDENTICAL state ⇒ "FINALLY denied this exact state …"; one new commit
+      ⇒ a normal new pending request.
+- [ ] 29. Token separation, live: from the agent's terminal,
+      `curl -H "X-Hashgate-Operator-Token: <HOOK token>"
+      http://127.0.0.1:8377/ui/api/pending` ⇒ 403 — the proof that the new
+      path is closed to the hook credential.
+
+## v0.2: new gated actions
+
+- [ ] 30. Force-push: let the agent try `git push --force`. Expect: its own
+      pending (kind `git_force_push`); `show` displays "⚠ force-push …
+      overwrites <sha> on <ref>".
+- [ ] 31. `git reset --hard HEAD~1`: pending; `show` lists the discarded
+      commit(s) and the current HEAD.
+- [ ] 32. `rm -rf <dir-with-a-tracked-file>`: pending; `show` lists resolved
+      paths and warns "⚠ affects files tracked by git".
+- [ ] 33. One deploy action of your choice — `./deploy.sh` needs no extra
+      tools (create a two-line script, commit it). Expect: pending with the
+      artifact hash + HEAD in `show`; edit the script ⇒ retry derives a NEW
+      hash (stale/new pending).
+- [ ] 34. (Optional/external — requires Tailscale or similar:) open the UI
+      from your phone, approve one action via typed echo. Ergonomics note:
+      is typing 12 hex characters on a phone keyboard acceptable?
+
 ## Ergonomics notes to collect (for the next iteration)
 
 - Deny→approve→retry loop friction in a real session?

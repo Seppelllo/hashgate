@@ -321,6 +321,8 @@ def register_ui(app: FastAPI, state: Any) -> None:  # noqa: C901
                 and not existing.consumed_at and not is_expired(existing):
             return back(ok="already has an open approval — the agent can retry now")
         reason = str(form.get("reason") or "").strip() or "approved via hashgate web UI"
+        # TODO(multi-operator): identity must come from the session, not the
+        # channel, once multiple operators exist
         approval = await state.approvals.decide(
             preview_id=row.preview_id, chain_id=row.chain_id,
             action_type=row.action_type, payload_hash=row.payload_hash,

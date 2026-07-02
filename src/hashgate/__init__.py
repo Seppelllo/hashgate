@@ -42,7 +42,7 @@ from hashgate.redact import Redactor, redact_payload
 from hashgate.store import MemoryStore, Store
 from hashgate.types import ApplyResult, ApplyStatus, OperatorContext, Preview
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 __all__ = [
     "Gate",

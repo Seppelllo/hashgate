@@ -93,6 +93,27 @@ the agent can retry the command now
 On retry the agent sees:
 `hashgate: approved by operator:alex (hash 079ff198a55f…), single-use approval consumed.`
 
+Beyond `git push`/`git merge`, v0.2 gates force-pushes (binding the remote
+state that would be overwritten), `git reset --hard` (binding the commits
+that would be discarded), recursive `rm` (binding the resolved deletion
+paths), and common deploy commands — `kamal deploy`, `docker compose up`,
+`kubectl apply`, named deploy scripts — each binding content hashes of what
+would ship and where. Details per action:
+[setup guide](docs/claude_code_setup.md).
+
+## Operator web UI
+
+The same server ships a mobile-first web UI at `http://127.0.0.1:8377/ui`:
+pending decisions (auto-refresh), a detail view with the same ⚠ warnings as
+the CLI, approve via a **typed 12-hex hash echo** (you type the first 12
+characters of the payload hash — the deliberate act survives the touch
+screen), deny with reason and a `final` checkbox, history, and evidence
+chains as timelines with bundle download. The one security-relevant fact:
+the UI requires a **separate `operator_token`** that never lives in the
+agent's environment — the hook token does not authorize it (see the
+[threat model](docs/threat_model.md)). The server binds to localhost by
+default; remote access (phone) is your job via Tailscale/VPN.
+
 ## Concepts
 
 **Gate / GatedAction.** The `Gate` owns the mechanics; your domain lives in
@@ -172,7 +193,9 @@ Refusals are first-class evidence — "the agent tried, the gate prevented it":
 Events carry IDs, hashes, operator identity/reason/channel and timestamps —
 never payload bodies, never secrets (allowlist-first redaction is built in).
 Subagent calls are gated like main-agent calls (confirmed end-to-end), and
-their provenance (`agent_id`, `agent_type`) is recorded in the chain.
+their provenance (`agent_id`, `agent_type`) is recorded in the chain — as is
+the decision surface (`cli` vs `web-ui`). Further outcomes (`denied_final`,
+`approval_stale`, `operator_denied`) chain and export the same way.
 
 ## Failure semantics
 
@@ -213,7 +236,7 @@ be bypassed by an attacker with access to the environment."
 
 ## Honest limitations
 
-- **Local, single-operator tool (v0.1).** One machine, one gate database, no
+- **Local, single-operator tool.** One machine, one gate database, no
   multi-user model.
 - **Not a sandbox.** The sanctioned path is enforced; the environment is not
   — see the [threat model](docs/threat_model.md) and the mitigations in the
@@ -238,15 +261,15 @@ responsibility of the operator.
 
 ## Status & roadmap
 
-v0.1. The core pattern was extracted from a production agent-runtime system
+v0.2. The core pattern was extracted from a production agent-runtime system
 where it ran end-to-end (goal → plan → artifacts → completion, including
-recovery and cross-operator takeover). 226 tests, including a concurrency
+recovery and cross-operator takeover). 319 tests, including a concurrency
 race pin on the idempotency claim and structural source pins on the accept
 order; golden fixtures freeze the canonical format and the bundle format.
 
-Roadmap candidates: self-hosted web UI for approvals, FastAPI middleware,
-sync wrapper on demand, further gated action types, signature
-implementations for bundle sealing, retention/export tooling.
+Roadmap candidates: FastAPI middleware, sync wrapper on demand, further
+gated action types, signature implementations for bundle sealing (Ed25519
+with export tooling), retention/export tooling, multi-operator identities.
 
 ## Sponsoring & integration work
 
