@@ -91,6 +91,9 @@ def test_non_bash_tools_are_never_gated() -> None:
     "hashgate --db /tmp/x.db accept abc123 --hash ffff",
     "hashgate deny abc123 --reason 'no'",
     "cd /x && hashgate accept abc --hash h",
+    "/Users/x/.hashgate/venv/bin/hashgate accept abc --hash h",  # path-prefixed
+    "sh -c 'hashgate deny abc --reason no'",                     # wrapped shell
+    "true; hashgate accept abc --hash h",                        # semicolon chain
 ])
 def test_agent_self_approval_is_always_flagged(command: str) -> None:
     cls = _bash(command)
@@ -104,6 +107,18 @@ def test_agent_self_approval_is_always_flagged(command: str) -> None:
 ])
 def test_readonly_hashgate_cli_is_not_gated(command: str) -> None:
     assert _bash(command).gated is False, command
+
+
+@pytest.mark.parametrize("command", [
+    # field finding: a commit message ABOUT hashgate tripped the always-deny
+    # self-approval rule and made the commit un-runnable. Mentions inside
+    # strings are not command invocations.
+    'git commit -m "docs: explain that hashgate accept requires the hash echo"',
+    "echo the operator runs hashgate deny in their own terminal",
+    'git commit -q -m "fix: hashgate accept/deny reasons"',
+])
+def test_mentions_of_the_cli_are_not_self_approval(command: str) -> None:
+    assert _bash(command).kind != KIND_SELF_APPROVAL, command
 
 
 def test_golden_fixture_inputs_classify_as_expected() -> None:

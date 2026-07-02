@@ -5,18 +5,22 @@ into Claude Code.
 Claude Code hooks are FAIL-OPEN on transport problems: an unreachable
 endpoint or a non-2xx answer produces a non-blocking error and the tool call
 runs anyway. For a governance gate that is unacceptable as the only wire.
-This wrapper inverts the semantics:
+This wrapper inverts the semantics — with the RIGHT blast radius:
 
 - reads the PreToolUse JSON from stdin,
 - POSTs it to the local gate server,
 - on 2xx: passes the server's JSON through on stdout, exit 0,
-- on ANY failure (connection refused, timeout, non-2xx, bad input):
-  a reason on stderr and **exit 2** — which Claude Code treats as a BLOCK.
+- on transport failure (connection refused, timeout, non-2xx): the wrapper
+  classifies the command LOCALLY with the SAME rules the server uses
+  (``rules.classify`` — one rulebook, not two) and blocks ONLY
+  gate-mandatory commands (**exit 2**); everything else passes through
+  (``{}``, exit 0). Server down means *gated actions* blocked — the agent
+  can still run tests, commit, read files.
+- malformed stdin: block (fail closed — an event we cannot classify could be
+  anything).
 
-Server down => gate closed, not gate open.
-
-Standard library only (urllib) — the wrapper must not fail because of a
-missing dependency.
+No third-party imports — only the standard library plus the package's own
+rules module (same installation).
 
 Environment:
     HASHGATE_SERVER_URL       default http://127.0.0.1:8377/hooks/pretooluse
@@ -31,14 +35,30 @@ import sys
 import urllib.error
 import urllib.request
 
+from hashgate.integrations.claude_code.rules import classify
+
 DEFAULT_URL = "http://127.0.0.1:8377/hooks/pretooluse"
 BLOCK_EXIT_CODE = 2  # Claude Code: exit 2 from a hook blocks the tool call
 
 
+def _fail_closed_or_open(event: dict, error: str) -> int:
+    """Transport failed: block only what the gate would gate."""
+    cls = classify(str(event.get("tool_name") or ""), event.get("tool_input") or {})
+    if cls.gated:
+        print(f"hashgate wrapper: gate server unreachable ({error}) — gated "
+              f"action ({cls.kind}) blocked. Start it with: hashgate-hook-server",
+              file=sys.stderr)
+        return BLOCK_EXIT_CODE
+    sys.stdout.write("{}")  # not gate-mandatory: pass through undecided
+    return 0
+
+
 def run(stdin_data: str) -> int:
     try:
-        json.loads(stdin_data)  # malformed hook input -> fail closed
-    except (json.JSONDecodeError, TypeError):
+        event = json.loads(stdin_data)
+        if not isinstance(event, dict):
+            raise ValueError("hook input is not an object")
+    except (json.JSONDecodeError, TypeError, ValueError):
         print("hashgate wrapper: invalid hook JSON on stdin — fail-closed block",
               file=sys.stderr)
         return BLOCK_EXIT_CODE
@@ -58,18 +78,11 @@ def run(stdin_data: str) -> int:
             if 200 <= response.status < 300:
                 sys.stdout.write(body)
                 return 0
-            print(f"hashgate wrapper: gate server answered {response.status} — "
-                  "fail-closed block", file=sys.stderr)
-            return BLOCK_EXIT_CODE
+            return _fail_closed_or_open(event, f"HTTP {response.status}")
     except urllib.error.HTTPError as exc:  # non-2xx raises in urllib
-        print(f"hashgate wrapper: gate server answered {exc.code} — "
-              "fail-closed block", file=sys.stderr)
-        return BLOCK_EXIT_CODE
+        return _fail_closed_or_open(event, f"HTTP {exc.code}")
     except Exception as exc:  # connection refused, timeout, DNS, …
-        print(f"hashgate wrapper: gate server unreachable ({exc}) — "
-              "fail-closed block. Start it with: hashgate-hook-server",
-              file=sys.stderr)
-        return BLOCK_EXIT_CODE
+        return _fail_closed_or_open(event, str(exc))
 
 
 def main() -> None:

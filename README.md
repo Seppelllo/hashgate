@@ -164,13 +164,17 @@ cryptography ships in v0.1.
 `hashgate[server]` ships a local gate server + operator CLI that hooks into
 Claude Code's PreToolUse event: `git push` / `git merge` issued by the agent
 are denied until the operator approves them — hash-bound to the repository's
-**current HEAD SHA**, single-use, expiring. If the agent commits again after
-the approval, the next attempt re-derives a different hash and the stale
-approval never fires. The recommended wiring is a **fail-closed command-hook
-wrapper**: Claude Code's own hook transport is fail-open on errors; the
-wrapper turns "gate server down" into "tool call blocked" (exit 2), not into
-silence. Agent-issued `hashgate accept` commands are always denied
-(self-approval guard). Setup: [`docs/claude_code_setup.md`](docs/claude_code_setup.md).
+**current HEAD SHA, the remote-tracking state and the full transported commit
+list**, single-use, expiring. If the agent commits again after the approval
+(or the remote moves), the next attempt re-derives a different hash and the
+stale approval never fires. This holds for **subagents too** — confirmed
+end-to-end: delegated subagent tool calls are gated the same way, and their
+provenance is recorded in the evidence chain. The recommended wiring is a
+**fail-closed command-hook wrapper**: Claude Code's own hook transport is
+fail-open on errors; the wrapper turns "gate server down" into "gated action
+blocked" (exit 2) while harmless commands keep flowing. Agent-issued
+`hashgate accept` commands are always denied (self-approval guard).
+Setup: [`docs/claude_code_setup.md`](docs/claude_code_setup.md).
 
 ## Canonical serialization
 

@@ -5,68 +5,98 @@ Every step names what to observe. Use a THROWAWAY git repo with a remote you
 control (a second local bare repo is enough: `git init --bare /tmp/remote.git`
 + `git remote add origin /tmp/remote.git`).
 
+**Round 1 result:** fail-closed, happy path, scenario B (stale bundle), deny
+and idempotency PASSED; findings fixed in the iteration round. Round 2 covers
+the re-tests marked ⟲ below.
+
 ## Setup
 
-- [ ] 1. `pip install -e '.[server]'` (or the built wheel) in a fresh venv;
-      `hashgate --help` and `hashgate-hook-wrapper` resolve on PATH.
-- [ ] 2. `export HASHGATE_TOKEN=$(openssl rand -hex 16)` and start
-      `hashgate-hook-server` in terminal 1. Expect uvicorn on 127.0.0.1:8377.
-- [ ] 3. Add the PreToolUse command hook (Option A snippet from
-      `docs/claude_code_setup.md`) to the throwaway repo's
-      `.claude/settings.json`; ensure the wrapper inherits `HASHGATE_TOKEN`.
-- [ ] 4. Sanity: in the repo, ask Claude Code for something harmless
-      (`git status`). Expect: runs normally (empty hook response — normal
-      permission machinery untouched).
+- [ ] 1. Fresh venv, **non-editable** install: `pip install '.[server]'`
+      (NOT `-e` — editable installs are broken on this platform, see
+      CONTRIBUTING.md). `hashgate --help` and `hashgate-hook-wrapper` resolve.
+      ⟲ Editable-fix verification: run `bash scripts/verify_install.sh` — must
+      print "install verification PASSED".
+- [ ] 2. **Every terminal you use below: activate the venv first.**
+- [ ] 3. Create `~/.hashgate/config.toml` (see setup doc §2) with
+      `ttl_seconds = 900` and a `token`. Start `hashgate-hook-server` in
+      terminal 1 and CHECK the startup line shows YOUR values
+      (`ttl=900s token=set`).
+- [ ] 4. Add the PreToolUse command hook to your **user**
+      `~/.claude/settings.json` with the ABSOLUTE wrapper path (setup doc §3).
+- [ ] 5. Sanity: something harmless (`git status`) runs normally.
 
-## Fail-closed proof (do this FIRST — it is the point of the wrapper)
+## Fail-closed proof (with the corrected blast radius)
 
-- [ ] 5. STOP the gate server. Ask Claude Code to `git push`.
-      Expect: the tool call is BLOCKED (wrapper exit 2), the agent sees the
-      fail-closed message. Server down = gate closed.
-- [ ] 6. Restart the server.
+- [ ] 6. STOP the gate server. Ask Claude Code to `git push`.
+      Expect: BLOCKED with "gate server unreachable — gated action (git_push)
+      blocked".
+- [ ] 7. ⟲ Server still stopped: let the agent run `git commit` / `ls` /
+      tests. Expect: all pass through normally (the agent is NOT paralyzed —
+      the round-1 finding is fixed).
+- [ ] 8. Restart the server.
 
 ## Happy path
 
-- [ ] 7. Let Claude Code make a small commit and try `git push`.
-      Expect: deny with `Pending as <preview_id> (hash …)`, agent stops/asks.
-- [ ] 8. Terminal 2: `hashgate pending` shows the preview; `hashgate show
-      <id>` shows repo_root/branch/**head_sha**/command — verify the head_sha
-      matches `git rev-parse HEAD` in the repo.
-- [ ] 9. `hashgate accept <id> --hash <FULL hash>` (copy from `show`).
-      Try a truncated hash first — expect a "hash echo mismatch" error.
-- [ ] 10. Tell the agent to retry the push. Expect: allow with
-      "approved by …, single-use approval consumed", push actually lands on
-      the remote.
-- [ ] 11. Ask the agent to push again immediately (same state).
-      Expect: deny — the fresh attempt derives the same hash, but the
-      approval is consumed (`already consumed`); a new preview/approval cycle
-      would be needed.
+- [ ] 9. Let Claude Code make a small commit and try `git push`.
+      Expect: deny with `Pending as <preview_id> (hash …)`.
+- [ ] 10. Terminal 2: `hashgate pending`; `hashgate show <id>` shows
+      repo_root/branch/head_sha AND ⟲ the transported-commit list
+      ("this push transports N commit(s)"); head_sha matches
+      `git rev-parse HEAD`.
+- [ ] 11. `hashgate accept <id> --hash <FULL hash>`. Try a truncated hash
+      first — expect the error naming "FULL 64-character" and where to find
+      it. The accept output shows local time + countdown ("— in 900s").
+- [ ] 12. ⟲ Accept the same preview AGAIN: expect exactly the
+      "already has an open approval …" notice plus "the agent can retry the
+      command now" — never a fresh "approved …" line (round-1 finding fixed).
+- [ ] 13. Agent retries the push → allow, push lands on the remote.
+- [ ] 14. Immediate second push attempt → deny "already consumed".
 
-## Scenario B — the pitch (state drift after approval)
+## TTL / expiry (⟲ re-test after the config fix)
 
-- [ ] 12. Have the agent commit, try `git push` (deny/pending), approve it
-      in terminal 2 — but BEFORE the retry, let the agent make ONE more
-      commit. Then retry the push.
-      Expect: deny with a NEW pending preview (new hash). `hashgate bundle`
-      of the OLD chain shows `preview → operator_approved → approval_stale`
-      with expected_hash ≠ derived_hash.
+- [ ] 15. Set `ttl_seconds = 30` in config.toml (or restart the server with
+      `HASHGATE_TTL_SECONDS=30` AND use the same value in the accept
+      terminal — with config.toml you don't have to think about this).
+      RESTART the server, check the startup line says `ttl=30s`.
+- [ ] 16. New pending push → accept → `show` displays expires ~30s ahead
+      (countdown). Wait >30s, agent retries.
+      Expect: deny "approval <id> expired at <ts> — a fresh approval is
+      required. Operator: 'hashgate pending'."
+- [ ] 17. Reset ttl to 900.
 
-## Refusal / expiry / evidence
+## Scenario B — state drift after approval
 
-- [ ] 13. `hashgate deny <id> --reason "not now"` on a fresh pending push;
-      agent retry → deny showing your reason verbatim.
-- [ ] 14. Approve one with `--ttl 5`, wait >5s, retry → deny "expired".
-- [ ] 15. `hashgate bundle <chain_id> --out bundle.json` for the happy-path
-      chain: events `preview → operator_approved → applied`; for the denied
-      chain: `… → operator_denied`. Spot-check: no command text inside the
-      bundle, only hashes/metadata.
-- [ ] 16. Self-approval guard: ask Claude Code to run
-      `hashgate accept <id> --hash <hash>` itself.
+- [ ] 18. Pending push → approve — but BEFORE the retry, let the agent make
+      ONE more commit. Retry.
+      Expect: deny with the ⟲ STALE reason ("a prior approval exists but is
+      stale — … approved hash …, current …. A new preview <id> is pending"),
+      NOT the generic pending text. `hashgate bundle` of the OLD chain shows
+      `preview → operator_approved → approval_stale`.
+
+## Refusal / evidence / history
+
+- [ ] 19. `hashgate deny <id> --reason "not now"` on a fresh pending push;
+      agent retry → deny quoting "not now".
+- [ ] 20. ⟲ `hashgate history` lists the past proposals with outcomes
+      (applied / denied / expired / stale) and the deny reason inline.
+- [ ] 21. ⟲ Denied-content warning: after the deny in step 19, let the agent
+      commit ON TOP and propose a new push. `hashgate show <new-id>` warns
+      "⚠ commit <sha> was HEAD of a denied push proposal — reason: 'not
+      now'…". The agent's deny reason does NOT mention the history.
+- [ ] 22. `hashgate bundle <chain_id> --out bundle.json`: happy chain
+      `preview → operator_approved → applied`; denied chain ends
+      `operator_denied`. No command text inside bundles.
+- [ ] 23. Self-approval guard (still open from round 1): ask Claude Code to
+      run `hashgate accept <id> --hash <hash>` itself.
       Expect: always-deny ("operator's own terminal").
+- [ ] 24. ⟲ Subagent: let a subagent (Task tool) attempt the push. Expect:
+      gated as usual; the preview chain carries an `agent_context` event with
+      agent_id/agent_type (visible in the bundle).
 
-## Ergonomics notes to collect while testing (for the iteration round)
+## Ergonomics notes to collect (for the next iteration)
 
-- How disruptive is the deny→approve→retry loop in a real session?
-- Is the deny reason enough for the agent to behave (retry vs. giving up)?
-- Anything annoying about `hashgate pending`/`show` output formatting?
-- Does the 15-minute default TTL fit your review pace?
+- Deny→approve→retry loop friction in a real session?
+- Are the case-specific deny reasons (pending/stale/expired/denied) enough
+  for the agent to behave sensibly?
+- `history` output: missing columns?
+- TTL default 900s: fits your review pace?

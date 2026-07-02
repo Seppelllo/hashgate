@@ -109,6 +109,7 @@ class ApprovalService:
             await append_chain_event(
                 self._store, chain_id,
                 "operator_approved" if decision == DECISION_APPROVED else "operator_denied",
+                action_type=action_type, channel="cli",
                 approval_id=row.id, operator_id=row.operator_id, reason=row.reason,
                 payload_hash=payload_hash, expires_at=row.expires_at,
             )

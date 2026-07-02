@@ -86,6 +86,70 @@ async def test_validate_refuses_kind_mismatch(repo) -> None:
     assert exc.value.code == "command_kind_mismatch"
 
 
+@pytest.fixture
+def repo_with_remote(repo, tmp_path):
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True,
+                   capture_output=True, env=_GIT_ENV)
+    _git(repo, "remote", "add", "origin", str(remote))
+    _git(repo, "push", "-u", "origin", "main")
+    return repo, remote
+
+
+async def test_push_payload_shows_the_transported_commits(repo_with_remote) -> None:
+    repo, _remote = repo_with_remote
+    (repo / "a.txt").write_text("two\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "feature work")
+    _git(repo, "commit", "--allow-empty", "-m", "cleanup")
+    action = GitPushAction()
+    payload = await action.derive(GitCommandContext(cwd=str(repo), command="git push"))
+    assert payload["remote_ref"] == "origin/main"
+    assert payload["remote_sha"] == _git(repo, "rev-parse", "origin/main")
+    assert [c["subject"] for c in payload["commits"]] == ["cleanup", "feature work"]
+    assert all(len(c["sha"]) == 40 for c in payload["commits"])
+    assert payload["commits_truncated"] is False
+
+
+async def test_moved_remote_changes_the_hash(repo_with_remote, tmp_path) -> None:
+    # scenario B, remote side: someone else pushes; the approved hash is stale
+    repo, remote = repo_with_remote
+    action = GitPushAction()
+    ctx = GitCommandContext(cwd=str(repo), command="git push")
+    h1 = canonical_hash(await action.derive(ctx))
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(remote), str(clone)], check=True,
+                   capture_output=True, env=_GIT_ENV)
+    subprocess.run(["git", "-C", str(clone), "commit", "--allow-empty",
+                    "-m", "someone else"], check=True, capture_output=True,
+                   env=_GIT_ENV)
+    subprocess.run(["git", "-C", str(clone), "push"], check=True,
+                   capture_output=True, env=_GIT_ENV)
+    _git(repo, "fetch", "origin")  # remote-tracking ref moves
+    h2 = canonical_hash(await action.derive(ctx))
+    assert h1 != h2
+
+
+async def test_commit_list_truncates_at_cap(repo_with_remote) -> None:
+    repo, _remote = repo_with_remote
+    for i in range(55):
+        _git(repo, "commit", "--allow-empty", "-m", f"c{i}")
+    action = GitPushAction()
+    payload = await action.derive(GitCommandContext(cwd=str(repo), command="git push"))
+    assert len(payload["commits"]) == 50
+    assert payload["commits_truncated"] is True
+    assert payload["commits"][0]["subject"] == "c54"  # newest first, deterministic
+
+
+async def test_push_without_upstream_has_null_remote_and_full_history(repo) -> None:
+    action = GitPushAction()
+    payload = await action.derive(GitCommandContext(cwd=str(repo),
+                                                    command="git push -u origin main"))
+    assert payload["remote_ref"] is None
+    assert payload["remote_sha"] is None
+    assert len(payload["commits"]) == 1  # the whole (short) history transports
+
+
 async def test_idempotency_key_requires_a_bound_approval(repo) -> None:
     action = GitPushAction()
     ctx = GitCommandContext(cwd=str(repo), command="git push")

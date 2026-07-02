@@ -2,30 +2,45 @@
 
 ## Setup
 
+**Every terminal: activate/select the project environment first** (`uv run`
+does this implicitly; with plain venvs, `source .venv/bin/activate`). The dev
+environment is pinned to Python 3.12 via `.python-version`.
+
 ```bash
-uv run --group dev python -m pytest -q     # full test suite (no network needed)
-uv run --group dev ruff check src tests
+uv sync --no-editable --group dev                       # once (and after deps change)
+uv run --no-editable --group dev python -m pytest -q    # full suite (no network)
+uv run --no-editable --group dev ruff check src tests examples
+bash scripts/verify_install.sh                          # fresh-venv install proof
 ```
 
-The dev environment is pinned to Python 3.12 via `.python-version`.
+`--no-editable` is deliberate (see the pitfall below). `[tool.uv].cache-keys`
+covers `src/**/*.py`, so uv rebuilds the package automatically whenever a
+source file changes — the dev loop stays "edit, run" (verified: an edited
+`__version__` shows up on the next `uv run`).
+
+For pip users: **`pip install '.[server]'` — NOT `pip install -e`.** Editable
+installs are known-broken on this platform (below).
 
 ## Known pitfall: editable installs silently broken (underscore `.pth` skip)
 
 Observed reproducibly on CPython 3.12.12 and 3.14.3 in this environment: the
 `site` module does not process `.pth` files whose names start with an
-underscore (a byte-identical copy under a non-underscore name IS processed;
-uv's `_virtualenv.pth` is skipped the same way, without visible harm).
-Hatchling's editable installs write underscore-prefixed `.pth` files
-(`_editable_impl_<pkg>.pth`, or `_<pkg>.pth` with `dev-mode-dirs`), so the
-editable-installed package can silently fail to import
-(`ModuleNotFoundError: No module named 'hashgate'`) even though the install
-"succeeded". Built wheels (real installs) are unaffected — they copy the
-package into `site-packages`.
+underscore (a byte-identical copy under a non-underscore name IS processed).
+PEP-660 editable installs write underscore-prefixed `.pth` files (hatchling:
+`_editable_impl_<pkg>.pth` / `_<pkg>.pth`; setuptools: `__editable__.*.pth`),
+so an editable-installed package silently fails to import
+(`ModuleNotFoundError: No module named 'hashgate'`) — and console scripts
+(`hashgate`, `hashgate-hook-wrapper`) die the same way, which is worse than a
+broken test run. Built wheels / non-editable installs are unaffected — they
+copy the package into `site-packages`.
 
-Consequence for this repo: **the test suite does not depend on the editable
-install at all** — `tests/conftest.py` puts `src/` on `sys.path` directly.
-If imports break after toolchain changes, look at the `.pth` files in
-`site-packages` first; this was debugged twice already.
+Since the cause sits in the local Python's `site` behavior and hits every
+editable backend alike, we do not fight it in the build backend. Decision:
+**non-editable everywhere** (`uv … --no-editable` + cache-keys for the dev
+loop; `pip install '.[server]'` for consumers), plus `tests/conftest.py`
+putting `src/` on `sys.path` so the plain test suite never depends on install
+mechanics at all. If imports break after toolchain changes, look at the
+`.pth` files in `site-packages` first; this was debugged twice already.
 
 ## Supported Python versions
 

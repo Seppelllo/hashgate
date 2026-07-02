@@ -51,8 +51,20 @@ async def _git(cwd: str, *args: str) -> str:
     return stdout.decode().strip()
 
 
+async def _git_optional(cwd: str, *args: str) -> str | None:
+    """Like _git, but a git-level failure returns None (e.g. no upstream)."""
+    try:
+        return await _git(cwd, *args)
+    except ValidationFailed:
+        return None
+
+
 def normalize_command(command: str) -> str:
     return " ".join(str(command or "").split())
+
+
+#: transported-commit list cap (payloads stay reviewable and bounded)
+MAX_COMMITS_IN_PAYLOAD = 50
 
 
 class _GitActionBase:
@@ -101,9 +113,37 @@ class _GitActionBase:
 
 
 class GitPushAction(_GitActionBase):
+    """A push transports EVERY commit between the remote and HEAD — the
+    payload must show exactly that, or the operator approves blind: it binds
+    the remote-tracking state (``remote_sha``) and the transported commit
+    list in addition to the HEAD SHA. Re-derivation reads both fresh, so a
+    moved REMOTE invalidates an approval just like a moved HEAD does."""
+
     action_type = "git_push"
     feature_flag = "git_push_gate_enabled"
     _kind_re = _PUSH_RE
+
+    async def derive(self, ctx: GitCommandContext) -> dict[str, Any]:
+        payload = await super().derive(ctx)
+        remote_ref = await _git_optional(
+            ctx.cwd, "rev-parse", "--abbrev-ref", "@{upstream}")
+        remote_sha = await _git_optional(ctx.cwd, "rev-parse", "@{upstream}") \
+            if remote_ref else None
+        range_spec = f"{remote_sha}..HEAD" if remote_sha else "HEAD"
+        log = await _git(ctx.cwd, "log", "--format=%H%x09%s",
+                         "-n", str(MAX_COMMITS_IN_PAYLOAD + 1), range_spec)
+        commits = []
+        for line in log.splitlines():
+            sha, _, subject = line.partition("\t")
+            commits.append({"sha": sha, "subject": subject[:200]})
+        truncated = len(commits) > MAX_COMMITS_IN_PAYLOAD
+        payload.update({
+            "remote_ref": remote_ref,  # None on a first push without upstream
+            "remote_sha": remote_sha,
+            "commits": commits[:MAX_COMMITS_IN_PAYLOAD],
+            "commits_truncated": truncated,
+        })
+        return payload
 
 
 class GitMergeAction(_GitActionBase):

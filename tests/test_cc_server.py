@@ -154,8 +154,11 @@ async def test_expired_approval_denies(tmp_path, repo) -> None:
         decision, deny_reason = _decision(await client.post(
             "/hooks/pretooluse", json=_event(repo, "git push")))
     assert decision == "deny"
-    assert "expired" in deny_reason
-    assert "fresh operator approval" in deny_reason
+    # golden substrings: the reason must say WHICH approval expired WHEN and
+    # what the operator does next
+    assert f"approval {approval_id} expired at" in deny_reason
+    assert "a fresh approval is required" in deny_reason
+    assert "hashgate pending" in deny_reason
 
 
 async def test_commit_after_approval_denies_and_marks_stale(tmp_path, repo) -> None:
@@ -171,7 +174,12 @@ async def test_commit_after_approval_denies_and_marks_stale(tmp_path, repo) -> N
         decision, deny_reason = _decision(await client.post(
             "/hooks/pretooluse", json=_event(repo, "git push")))
     assert decision == "deny"
-    assert "requires operator approval" in deny_reason  # new pending, new hash
+    # golden substrings: the agent learns the WHOLE situation — a stale prior
+    # approval, both hashes, and the new pending preview
+    assert "a prior approval exists but is stale" in deny_reason
+    assert "repository state changed since approval" in deny_reason
+    assert "approved hash" in deny_reason and "current" in deny_reason
+    assert "A new preview" in deny_reason and "hashgate show" in deny_reason
     # the old approval's chain records that its state went stale
     sm, store, approvals = await harness.services()
     stale = (await approvals.open_approvals_for_action("git_push"))[0]
@@ -181,6 +189,13 @@ async def test_commit_after_approval_denies_and_marks_stale(tmp_path, repo) -> N
     stale_event = events[-1]
     assert stale_event["expected_hash"] == stale.payload_hash
     assert stale_event["derived_hash"] != stale.payload_hash
+    # no reasonless nulls in core fields of integration events
+    assert stale_event["channel"] == "server"
+    assert stale_event["action_type"] == "git_push"
+    assert stale_event["operator_id"] == "system:hashgate-server"
+    approved_event = events[1]
+    assert approved_event["channel"] == "cli"
+    assert approved_event["action_type"] == "git_push"
     bundle = await EvidenceExporter(store=store) \
         .export_oversight_bundle_by_chain(stale.chain_id)
     assert bundle["outcome"] == "approval_stale"
@@ -254,5 +269,54 @@ async def test_full_chain_evidence_for_the_happy_path(tmp_path, repo) -> None:
         ["preview", "operator_approved", "applied"]
     assert bundle["outcome"] == "applied"
     assert verify_bundle(bundle).valid
-    # payload bodies (the command) never leak into evidence
+    # payload bodies (the command) never leak into evidence — the preview
+    # event's reason is descriptive, not the raw command
     assert "origin" not in str(bundle)
+    assert bundle["events"][0]["reason"] == \
+        "agent requested git_push via PreToolUse hook"
+
+
+async def test_subagent_provenance_lands_in_the_chain(tmp_path, repo) -> None:
+    harness = Harness(tmp_path)
+    event = _event(repo, "git push")
+    event["agent_id"] = "sub-42"
+    event["agent_type"] = "code-writer"
+    async with harness.client() as client:
+        _, reason = _decision(await client.post("/hooks/pretooluse", json=event))
+    preview_id = reason.split("Pending as ")[1].split(" ")[0]
+    sm, store, _approvals = await harness.services()
+    preview = await store.load_preview(preview_id)
+    assert preview.operator.operator_id == "agent:sub-42"
+    events = await store.list_chain_events(preview.chain_id)
+    assert [e["kind"] for e in events] == ["preview", "agent_context"]
+    context = events[1]
+    assert context["agent_id"] == "sub-42"
+    assert context["agent_type"] == "code-writer"
+    assert context["session_id"] == "sess-1"
+    bundle = await EvidenceExporter(store=store) \
+        .export_oversight_bundle_by_chain(preview.chain_id)
+    assert verify_bundle(bundle).valid
+    assert any(e.get("agent_id") == "sub-42" for e in bundle["events"])
+
+
+async def test_main_agent_without_subagent_fields_gets_no_context_event(
+        tmp_path, repo) -> None:
+    harness = Harness(tmp_path)
+    async with harness.client() as client:
+        _, reason = _decision(await client.post("/hooks/pretooluse",
+                                                json=_event(repo, "git push")))
+    preview_id = reason.split("Pending as ")[1].split(" ")[0]
+    sm, store, _approvals = await harness.services()
+    preview = await store.load_preview(preview_id)
+    assert preview.operator.operator_id == "agent:sess-1"  # nothing invented
+    assert [e["kind"] for e in await store.list_chain_events(preview.chain_id)] \
+        == ["preview"]
+
+
+async def test_health_endpoint_reports_effective_config(tmp_path) -> None:
+    harness = Harness(tmp_path, ttl=123)
+    async with harness.client() as client:
+        response = await client.get("/health")
+    info = response.json()
+    assert info["db"] == harness.db_path
+    assert info["ttl_seconds"] == 123

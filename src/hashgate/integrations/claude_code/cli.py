@@ -1,24 +1,32 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Operator CLI: pending / show / accept / deny / bundle.
+"""Operator CLI: pending / show / accept / deny / history / bundle.
 
-Talks directly to the gate database (no server round-trip). The accept
-requires the FULL payload hash as an explicit echo argument — a blind
-``accept <id>`` does not exist by design: the echo is the operator's
+Talks directly to the gate database (no server round-trip) and reads the
+SAME configuration source as the server (env > ~/.hashgate/config.toml >
+default) — the approval TTL is therefore identical no matter which terminal
+runs what. Best effort, the CLI asks the running server (/health) whether
+both point at the same database and warns on divergence.
+
+The accept requires the FULL payload hash as an explicit echo argument — a
+blind ``accept <id>`` does not exist by design: the echo is the operator's
 cryptographic statement of what they reviewed.
 
-Environment:
-    HASHGATE_DB         database path (default ~/.hashgate/hooks.db)
-    HASHGATE_OPERATOR   operator id (default operator:<username>)
+Operator-facing times are shown in LOCAL time with UTC in brackets (and a
+countdown for expiries). Evidence bundles and audit events stay pure UTC —
+proofs are timezone-proof and are not touched.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import difflib
 import getpass
 import json
 import os
+import re
 import sys
-from datetime import datetime
+import urllib.request
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -33,19 +41,21 @@ from hashgate.integrations.claude_code.approvals import (
     DECISION_DENIED,
     ApprovalService,
     ClaudeCodeBase,
+    HookApprovalRow,
     is_expired,
 )
+from hashgate.integrations.claude_code.config import GateConfig, load_config
 from hashgate.store import utcnow
 
-DEFAULT_DB_PATH = "~/.hashgate/hooks.db"
+_HASH_LEN = 64
 
 
 def _operator_id() -> str:
     return os.environ.get("HASHGATE_OPERATOR") or f"operator:{getpass.getuser()}"
 
 
-async def _open(db_path: str):
-    db_file = Path(db_path).expanduser()
+async def _open(cfg: GateConfig, db_override: str | None):
+    db_file = Path(db_override or cfg.resolved_db_path).expanduser()
     db_file.parent.mkdir(parents=True, exist_ok=True)
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
     await create_core_tables(engine)
@@ -53,7 +63,41 @@ async def _open(db_path: str):
         await conn.run_sync(ClaudeCodeBase.metadata.create_all)
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     store = SQLAlchemyStore(sessionmaker)
-    return sessionmaker, store, ApprovalService(sessionmaker, store)
+    return sessionmaker, store, ApprovalService(sessionmaker, store,
+                                                ttl_seconds=cfg.ttl_seconds)
+
+
+def _warn_if_server_db_differs(cfg: GateConfig, db_override: str | None) -> None:
+    """Best effort: if the server runs, make sure we look at the same DB."""
+    cli_db = str(Path(db_override or cfg.resolved_db_path).expanduser())
+    try:
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{cfg.port}/health", timeout=1) as response:
+            info = json.loads(response.read().decode())
+    except Exception:
+        return  # server not running / unreachable — nothing to check
+    server_db = info.get("db")
+    if server_db and server_db != cli_db:
+        print(f"warning: the gate server uses db={server_db} but this CLI uses "
+              f"db={cli_db} — your decision will NOT be visible to the server. "
+              "Check HASHGATE_DB / config.toml.", file=sys.stderr)
+
+
+# --- time rendering (operator-facing: local + UTC + countdown) ----------------
+def _local(iso: str | None) -> str:
+    if not iso:
+        return "-"
+    dt = datetime.fromisoformat(iso)
+    local = dt.astimezone()
+    return f"{local.strftime('%Y-%m-%d %H:%M:%S')} (UTC {dt.astimezone(UTC).strftime('%H:%M:%S')})"
+
+
+def _expiry(iso: str | None) -> str:
+    if not iso:
+        return "-"
+    remaining = int((datetime.fromisoformat(iso) - utcnow()).total_seconds())
+    suffix = f" — in {remaining}s" if remaining > 0 else " — EXPIRED"
+    return _local(iso) + suffix
 
 
 def _age(iso: str) -> str:
@@ -64,8 +108,45 @@ def _age(iso: str) -> str:
     return f"{seconds}s" if seconds < 120 else f"{seconds // 60}m"
 
 
+# --- outcome classification (history) -----------------------------------------
+async def _outcome(store, approvals, row: PreviewRow):
+    """(outcome, decided_at, deny_reason) for one preview."""
+    approval = await approvals.latest_for_preview(row.preview_id)
+    if approval is None:
+        return "pending", None, None
+    if approval.decision == DECISION_DENIED:
+        return "denied", approval.created_at, approval.reason
+    if approval.consumed_at:
+        return "applied", approval.consumed_at, None
+    if is_expired(approval):
+        return "expired", approval.created_at, None
+    if row.chain_id:
+        events = await store.list_chain_events(row.chain_id)
+        if any(e.get("kind") == "approval_stale" for e in events):
+            return "stale", approval.created_at, None
+    return "approved", approval.created_at, None
+
+
+async def _denied_head_map(sessionmaker) -> dict[str, tuple[str, str]]:
+    """head_sha of previously DENIED push proposals -> (reason, decided_at)."""
+    async with sessionmaker() as session:
+        denied = (await session.execute(
+            select(HookApprovalRow)
+            .where(HookApprovalRow.decision == DECISION_DENIED))).scalars().all()
+        result: dict[str, tuple[str, str]] = {}
+        for approval in denied:
+            preview = await session.get(PreviewRow, approval.preview_id)
+            head = ((preview.payload or {}).get("head_sha")
+                    if preview is not None else None)
+            if head:
+                result[head] = (approval.reason, approval.created_at)
+    return result
+
+
+# --- commands -------------------------------------------------------------------
 async def cmd_pending(args: argparse.Namespace) -> int:
-    sessionmaker, _store, approvals = await _open(args.db)
+    cfg = load_config()
+    sessionmaker, _store, approvals = await _open(cfg, args.db)
     async with sessionmaker() as session:
         previews = (await session.execute(
             select(PreviewRow).order_by(PreviewRow.derived_at))).scalars().all()
@@ -89,17 +170,33 @@ async def cmd_pending(args: argparse.Namespace) -> int:
 
 
 async def cmd_show(args: argparse.Namespace) -> int:
-    sessionmaker, _store, approvals = await _open(args.db)
+    if not args.preview_id:
+        return await cmd_pending(args)  # bare 'show' = what needs my decision?
+    cfg = load_config()
+    sessionmaker, _store, approvals = await _open(cfg, args.db)
     async with sessionmaker() as session:
         row = await session.get(PreviewRow, args.preview_id)
     if row is None:
         print(f"unknown preview {args.preview_id}", file=sys.stderr)
         return 1
+    payload = row.payload or {}
+    commits = payload.get("commits") or []
+    if commits:
+        flag = " (list truncated)" if payload.get("commits_truncated") else ""
+        print(f"this push transports {len(commits)} commit(s){flag}:")
+        denied_heads = await _denied_head_map(sessionmaker)
+        for commit in commits:
+            print(f"  {commit['sha'][:12]}  {commit['subject']}")
+            if commit["sha"] in denied_heads:
+                reason, at = denied_heads[commit["sha"]]
+                print(f"  ⚠ commit {commit['sha'][:12]} was HEAD of a denied "
+                      f"push proposal — reason: '{reason}', at {_local(at)}")
+        print()
     approval = await approvals.latest_for_preview(row.preview_id)
     print(json.dumps({
         "preview_id": row.preview_id,
         "action_type": row.action_type,
-        "payload": row.payload,
+        "payload": payload,
         "payload_hash": row.payload_hash,
         "canon_version": row.canon_version,
         "derived_at": row.derived_at,
@@ -116,7 +213,8 @@ async def cmd_show(args: argparse.Namespace) -> int:
 
 
 async def _decide(args: argparse.Namespace, decision: str) -> int:
-    sessionmaker, _store, approvals = await _open(args.db)
+    cfg = load_config()
+    sessionmaker, _store, approvals = await _open(cfg, args.db)
     async with sessionmaker() as session:
         row = await session.get(PreviewRow, args.preview_id)
     if row is None:
@@ -125,21 +223,27 @@ async def _decide(args: argparse.Namespace, decision: str) -> int:
     if decision == DECISION_APPROVED:
         echoed = str(args.hash or "").strip()
         if echoed != row.payload_hash:
-            print("hash echo mismatch: the --hash argument must be the FULL "
-                  f"payload hash of the preview\n  expected: {row.payload_hash}\n"
+            print(f"hash echo mismatch: --hash must be the FULL {_HASH_LEN}-character "
+                  f"payload hash of the preview (you passed {len(echoed)} characters).\n"
+                  f"Find it via 'hashgate pending' or 'hashgate show {row.preview_id}'.\n"
+                  f"  expected: {row.payload_hash}\n"
                   f"  got:      {echoed or '(empty)'}", file=sys.stderr)
             return 1
+    # ONE path for repeated decisions: an open approval is reported, never
+    # silently re-issued (and never re-printed as if freshly approved)
     existing = await approvals.latest_for_preview(row.preview_id)
     if existing is not None and existing.decision == DECISION_APPROVED \
             and not existing.consumed_at and not is_expired(existing):
         print(f"preview already has an open approval {existing.id} "
-              f"(expires {existing.expires_at})", file=sys.stderr)
-        return 1
+              f"(expires {_expiry(existing.expires_at)}).")
+        print("the agent can retry the command now")
+        return 0  # idempotent: nothing changed, nothing re-issued
     reason = args.reason or (
         "approved via hashgate CLI" if decision == DECISION_APPROVED else "")
     if not reason:
         print("--reason is required", file=sys.stderr)
         return 1
+    _warn_if_server_db_differs(cfg, args.db)
     approval = await approvals.decide(
         preview_id=row.preview_id, chain_id=row.chain_id,
         action_type=row.action_type, payload_hash=row.payload_hash,
@@ -148,7 +252,7 @@ async def _decide(args: argparse.Namespace, decision: str) -> int:
     )
     if decision == DECISION_APPROVED:
         print(f"approved {row.preview_id} as {approval.id} "
-              f"(single-use, expires {approval.expires_at})")
+              f"(single-use, expires {_expiry(approval.expires_at)})")
         print("the agent can retry the command now")
     else:
         print(f"denied {row.preview_id} as {approval.id}: {reason}")
@@ -163,8 +267,30 @@ async def cmd_deny(args: argparse.Namespace) -> int:
     return await _decide(args, DECISION_DENIED)
 
 
+async def cmd_history(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    sessionmaker, store, approvals = await _open(cfg, args.db)
+    async with sessionmaker() as session:
+        previews = (await session.execute(
+            select(PreviewRow).order_by(PreviewRow.derived_at.desc())
+            .limit(max(1, args.limit)))).scalars().all()
+    if not previews:
+        print("no previews recorded")
+        return 0
+    for row in previews:
+        outcome, decided_at, deny_reason = await _outcome(store, approvals, row)
+        head = str((row.payload or {}).get("head_sha") or "")[:12] or "-"
+        line = (f"{row.preview_id[:12]}  {row.action_type:10s}  {outcome:8s}  "
+                f"decided={_local(decided_at)}  head={head}")
+        if deny_reason:
+            line += f"  reason='{deny_reason}'"
+        print(line)
+    return 0
+
+
 async def cmd_bundle(args: argparse.Namespace) -> int:
-    sessionmaker, store, _approvals = await _open(args.db)
+    cfg = load_config()
+    sessionmaker, store, _approvals = await _open(cfg, args.db)
     chain_id = args.chain_id
     async with sessionmaker() as session:  # allow a preview id as convenience
         row = await session.get(PreviewRow, chain_id)
@@ -186,29 +312,47 @@ async def cmd_bundle(args: argparse.Namespace) -> int:
     return 0
 
 
+class _Parser(argparse.ArgumentParser):
+    """argparse with 'did you mean …?' for mistyped subcommands."""
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        match = re.search(r"invalid choice: '([^']+)'", message)
+        if match:
+            close = difflib.get_close_matches(match.group(1), list(_COMMANDS), n=1)
+            if close:
+                self.exit(2, f"{self.prog}: error: {message}\n"
+                             f"did you mean '{close[0]}'?\n")
+        super().error(message)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="hashgate",
         description="operator CLI for the hashgate Claude Code gate")
-    parser.add_argument("--db", default=os.environ.get("HASHGATE_DB", DEFAULT_DB_PATH))
+    parser.add_argument("--db", default=os.environ.get("HASHGATE_DB") or None,
+                        help="database path (default: shared config)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("pending", help="list previews awaiting an operator decision")
 
     show = sub.add_parser("show", help="show one preview's full payload")
-    show.add_argument("preview_id")
+    show.add_argument("preview_id", nargs="?", default=None,
+                      help="omit to list pending previews")
 
     accept = sub.add_parser("accept", help="approve a preview (hash echo mandatory)")
     accept.add_argument("preview_id")
     accept.add_argument("--hash", required=True,
-                        help="FULL payload hash of the preview (explicit echo)")
+                        help="FULL 64-character payload hash (explicit echo)")
     accept.add_argument("--reason", default=None)
     accept.add_argument("--ttl", type=int, default=None,
-                        help="approval lifetime in seconds (default 900)")
+                        help="approval lifetime in seconds (default: shared config)")
 
     deny = sub.add_parser("deny", help="deny a preview")
     deny.add_argument("preview_id")
     deny.add_argument("--reason", required=True)
+
+    history = sub.add_parser("history", help="past previews and their outcomes")
+    history.add_argument("--limit", type=int, default=20)
 
     bundle = sub.add_parser("bundle", help="export the oversight bundle of a chain")
     bundle.add_argument("chain_id", help="chain id (or a preview id)")
@@ -222,6 +366,7 @@ _COMMANDS = {
     "show": cmd_show,
     "accept": cmd_accept,
     "deny": cmd_deny,
+    "history": cmd_history,
     "bundle": cmd_bundle,
 }
 

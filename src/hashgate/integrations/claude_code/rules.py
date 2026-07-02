@@ -13,6 +13,13 @@ Special kind ``self_approval``: the agent itself has Bash, so it could run
 denied — approvals happen in the operator's own terminal, never through the
 agent. (Read-only ``hashgate pending``/``show`` stay allowed so the agent can
 report status.)
+
+Unlike the push/merge rules, self_approval has NO operator-approval path — a
+false positive here is an unfixable block, not one extra review. Its pattern
+therefore matches ``hashgate accept/deny`` only in COMMAND position (start of
+a command segment, incl. chained/wrapped/path-prefixed invocations), not as a
+mere mention inside a string: a commit message *about* hashgate must not trip
+the gate (field finding: it did).
 """
 from __future__ import annotations
 
@@ -27,7 +34,16 @@ KIND_SELF_APPROVAL = "self_approval"
 _GIT_RE = re.compile(r"(^|[^\w.-])git([^\w.-]|$)")
 _PUSH_RE = re.compile(r"(^|[^\w.-])push([^\w.-]|$)")
 _MERGE_RE = re.compile(r"(^|[^\w.-])merge([^\w.-]|$)")
-_SELF_APPROVAL_RE = re.compile(r"(^|[^\w.-])hashgate\b.*\b(accept|deny)\b", re.DOTALL)
+# command position: line/segment start (also after ; & | ` ( $( and quote
+# openings for wrapped shells), optional path prefix, options before the verb
+_SELF_APPROVAL_RE = re.compile(
+    r"""(?mx)
+    (?:^|[;&|`(]|\$\(|["'])          # start of a command segment
+    \s*(?:\S*/)?hashgate\s+          # the hashgate executable (any path)
+    (?:--?\S+(?:\s+\S+)*?\s+)?       # tolerated options, e.g. --db X
+    (?:accept|deny)\b                # the mutating verbs
+    """,
+)
 
 
 @dataclass(frozen=True)

@@ -71,3 +71,10 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.uv]
+# Editable installs are unreliable on this platform (site skips
+# underscore-prefixed .pth files — see CONTRIBUTING.md), so the dev flow is
+# non-editable: `uv sync --no-editable` / `uv run --no-editable …`.
+# cache-keys make uv rebuild the project whenever a source file changes.
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.py" }]

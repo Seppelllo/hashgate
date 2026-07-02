@@ -18,6 +18,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Run tests
-        run: uv run --group dev python -m pytest -q
+        run: uv run --no-editable --group dev python -m pytest -q
       - name: Lint
-        run: uv run --group dev ruff check src tests examples
+        run: uv run --no-editable --group dev ruff check src tests examples
+      - name: Verify install (console scripts, fail-closed wrapper)
+        run: bash scripts/verify_install.sh
