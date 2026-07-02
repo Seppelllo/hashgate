@@ -1,0 +1,105 @@
+[
+  {
+    "name": "empty",
+    "payload": {},
+    "expected_hash": "2b3bcd05388b807ed3a424b147bb808761c9e71cecbe109f8f7d38dd1fd1d3cc"
+  },
+  {
+    "name": "simple_scalars",
+    "payload": {
+      "a": 1,
+      "b": "x",
+      "c": true,
+      "d": null
+    },
+    "expected_hash": "d576d84a1f094ec8ee3be2d87ae616b9263d736bb095d04a03a45de4b5ada427"
+  },
+  {
+    "name": "key_order_semantics",
+    "payload": {
+      "b": 1,
+      "a": 2,
+      "10": 3,
+      "2": 4
+    },
+    "expected_hash": "25b3470fac0a3b24c047da64bd727d89c0e980907cd7867b04b51e2661b46206"
+  },
+  {
+    "name": "nested",
+    "payload": {
+      "plan": {
+        "tickets": [
+          {
+            "order": 1,
+            "title": "Erster"
+          },
+          {
+            "order": 2,
+            "title": "Zweiter"
+          }
+        ]
+      },
+      "max": 5
+    },
+    "expected_hash": "33795a58d928f8b51997b44625a6d81b1ac2a595d6c255ebbe4d06a3a3c9f5d2"
+  },
+  {
+    "name": "unicode_umlaut",
+    "payload": {
+      "title": "Prüfung äöüß",
+      "note": "Straße"
+    },
+    "expected_hash": "25e6b4698e8040ef77fec8cae55be24a674143d5df3a80fa407bbfde18d38524"
+  },
+  {
+    "name": "unicode_emoji_cjk",
+    "payload": {
+      "emoji": "🚀🔒",
+      "cjk": "監視、承認"
+    },
+    "expected_hash": "49d8bec2d6d399d6018bd7aadc977ed5a8027d43917f73fe2046e1d65830ea9f"
+  },
+  {
+    "name": "none_value_present",
+    "payload": {
+      "a": null
+    },
+    "expected_hash": "c3e3f8abaae7a2d48dbb5347dcbdb930a303687dc7df1471f3f48ff44e16426b"
+  },
+  {
+    "name": "list_order_matters",
+    "payload": {
+      "items": [
+        1,
+        2,
+        3
+      ]
+    },
+    "expected_hash": "e61d85a34b03236ac6240907053a762a5555cc92c71f4e8f57882a41e59ad8a8"
+  },
+  {
+    "name": "ints_and_bools",
+    "payload": {
+      "zero": 0,
+      "neg": -42,
+      "big": 9223372036854775808,
+      "t": true,
+      "f": false
+    },
+    "expected_hash": "791eb3d052fa9d24e127ebabeca468b7c16bfe9d9416458de34ddfef34347b39"
+  },
+  {
+    "name": "pr_merge_example",
+    "payload": {
+      "repo": "acme/api",
+      "pr": 1337,
+      "head_sha": "9fceb02d0ae598e95dc970b74767f19372d61af8",
+      "files_changed": {
+        "total": 3,
+        "additions": 120,
+        "deletions": 8
+      }
+    },
+    "expected_hash": "916c06d128210f7b214dde168495fe421c2fd2b0a64ea42a957b8b9d0c35496b"
+  }
+]
