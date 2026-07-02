@@ -3,7 +3,9 @@
 **A fail-closed, hash-bound human approval gate for AI agents.** The agent's
 proposed action is previewed; the operator accepts the preview's canonical
 hash; at execution time the server re-derives the action from live state and
-compares; the effect runs only if the hashes match — and only once.
+compares; the effect runs only if the hashes match — and only once. It is a
+governance and oversight layer, not a sandbox — see the
+[threat model](#threat-model--what-hashgate-is-and-is-not).
 
 ## Why a hash, not a button
 
@@ -184,16 +186,38 @@ gate.** hashgate ships two wirings and names the trade-off:
 | **Command-hook wrapper** (recommended) | gated actions blocked (exit 2); everything else — commits, tests, reads — keeps flowing. The wrapper classifies locally with the same rules module the server uses. |
 | Direct HTTP hook (documented) | tool calls proceed ungated — advisory only. |
 
+## Threat model — what hashgate is and is not
+
+**What it enforces.** hashgate enforces the sanctioned path and makes
+oversight provable: no gated action runs without a hash-bound, single-use,
+unexpired operator approval that matches the exact current state, and every
+decision — refusals included — leaves a verifiable evidence chain. That
+protects against accidents, TOCTOU drift (state changing between review and
+execution), silent piggybacking, and agents that follow instructions instead
+of checking state — and it turns "a human was overseeing this" from a claim
+into evidence.
+
+**What it does not do.** hashgate is not a sandbox. An adversarial agent
+with unrestricted file and shell access on the same machine can attack the
+environment — the gate database, the hook settings, the wrapper — instead of
+going through the gate. Containment is the job of OS isolation and
+permission rules; hashgate is one layer of defense in depth, not all of
+them. Mitigations are in the [setup guide](docs/claude_code_setup.md); the
+full analysis, including the adversary taxonomy and known bypass paths, is
+in [`docs/threat_model.md`](docs/threat_model.md).
+
+**What "fail-closed" means here.** It is transport and policy semantics: an
+unreachable gate server blocks gated actions (unlike fail-open direct HTTP
+hooks), flags default off, policies default deny. It does not mean "cannot
+be bypassed by an attacker with access to the environment."
+
 ## Honest limitations
 
 - **Local, single-operator tool (v0.1).** One machine, one gate database, no
   multi-user model.
-- **The sanctioned path is enforced; the environment is not.** An agent with
-  unrestricted file access could attack the local gate database or edit hook
-  settings. Mitigations (user-/managed-settings placement, permission deny
-  rules for the gate's files) are in the
-  [setup guide](docs/claude_code_setup.md) — the gate is one layer of
-  defense in depth, not all of them.
+- **Not a sandbox.** The sanctioned path is enforced; the environment is not
+  — see the [threat model](docs/threat_model.md) and the mitigations in the
+  [setup guide](docs/claude_code_setup.md).
 - The denied-commit warning is SHA-based; amend/rebase changes SHAs.
 - After a deny, the agent's next attempt creates a new pending request — by
   design (a deny is situational, not a content ban), but spammable. Roadmap:

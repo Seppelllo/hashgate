@@ -2,10 +2,11 @@
 """hashgate — execution governance for AI agents.
 
 Preview -> canonical hash -> operator accept -> server-side re-derivation ->
-apply. Fail-closed, idempotent, audited.
+apply. Fail-closed (transport and policy semantics), idempotent, audited.
 
 hashgate executes nothing itself; it gates. There is no auto-accept and no
-scheduler in the core.
+scheduler in the core. It is a governance/oversight layer, not a sandbox —
+see docs/threat_model.md for the threat model.
 """
 from hashgate.action import (
     ALREADY_APPLIED_RAISE,
@@ -41,7 +42,7 @@ from hashgate.redact import Redactor, redact_payload
 from hashgate.store import MemoryStore, Store
 from hashgate.types import ApplyResult, ApplyStatus, OperatorContext, Preview
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "Gate",
