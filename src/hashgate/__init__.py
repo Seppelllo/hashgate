@@ -7,6 +7,12 @@ apply. Fail-closed, idempotent, audited.
 hashgate executes nothing itself; it gates. There is no auto-accept and no
 scheduler in the core.
 """
+from hashgate.action import (
+    ALREADY_APPLIED_RAISE,
+    ALREADY_APPLIED_RESULT,
+    FrozenPayloadAction,
+    GatedAction,
+)
 from hashgate.canonical import CANONICAL_VERSION, HASH_ALGO, canonical_bytes, canonical_hash
 from hashgate.errors import (
     AlreadyApplied,
@@ -19,13 +25,26 @@ from hashgate.errors import (
     StateDrift,
     ValidationFailed,
 )
+from hashgate.gate import Gate
+from hashgate.ownership import OwnedResource, OwnershipGuard, TakeoverResult
 from hashgate.policy import MappingPolicySource, PolicyDecision, PolicyEngine, PolicySource
+from hashgate.redact import Redactor, redact_payload
 from hashgate.store import MemoryStore, Store
 from hashgate.types import ApplyResult, ApplyStatus, OperatorContext, Preview
 
 __version__ = "0.1.0.dev0"
 
 __all__ = [
+    "Gate",
+    "GatedAction",
+    "FrozenPayloadAction",
+    "ALREADY_APPLIED_RAISE",
+    "ALREADY_APPLIED_RESULT",
+    "OwnedResource",
+    "OwnershipGuard",
+    "TakeoverResult",
+    "Redactor",
+    "redact_payload",
     "CANONICAL_VERSION",
     "HASH_ALGO",
     "canonical_bytes",
