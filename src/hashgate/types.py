@@ -58,6 +58,9 @@ class Preview:
     expires_at: datetime | None = None
     #: frozen previews bind accept to stored bytes instead of a re-derivation
     frozen: bool = False
+    #: audit-chain root this preview started (event_id of the preview event);
+    #: accept/refuse/apply events attach to the same chain
+    chain_id: str | None = None
 
 
 class ApplyStatus(StrEnum):

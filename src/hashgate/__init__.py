@@ -17,6 +17,7 @@ from hashgate.canonical import CANONICAL_VERSION, HASH_ALGO, canonical_bytes, ca
 from hashgate.errors import (
     AlreadyApplied,
     CanonicalizationError,
+    EvidenceNotFound,
     HashgateError,
     HashMismatch,
     OwnershipViolation,
@@ -25,6 +26,14 @@ from hashgate.errors import (
     StateDrift,
     ValidationFailed,
 )
+from hashgate.evidence import (
+    BUNDLE_FORMAT,
+    BundleSigner,
+    BundleVerification,
+    EvidenceExporter,
+    order_chain_events,
+    verify_bundle,
+)
 from hashgate.gate import Gate
 from hashgate.ownership import OwnedResource, OwnershipGuard, TakeoverResult
 from hashgate.policy import MappingPolicySource, PolicyDecision, PolicyEngine, PolicySource
@@ -32,10 +41,17 @@ from hashgate.redact import Redactor, redact_payload
 from hashgate.store import MemoryStore, Store
 from hashgate.types import ApplyResult, ApplyStatus, OperatorContext, Preview
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.0"
 
 __all__ = [
     "Gate",
+    "EvidenceExporter",
+    "EvidenceNotFound",
+    "BundleSigner",
+    "BundleVerification",
+    "BUNDLE_FORMAT",
+    "verify_bundle",
+    "order_chain_events",
     "GatedAction",
     "FrozenPayloadAction",
     "ALREADY_APPLIED_RAISE",

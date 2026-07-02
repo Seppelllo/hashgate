@@ -46,6 +46,7 @@ class PreviewRow(HashgateBase):
     operator_id: Mapped[str] = mapped_column(String(160))
     reason: Mapped[str] = mapped_column(Text)
     channel: Mapped[str] = mapped_column(String(64))
+    chain_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
 
 class IdempotencyClaimRow(HashgateBase):
@@ -136,6 +137,7 @@ class SQLAlchemyStore:
                     operator_id=preview.operator.operator_id,
                     reason=preview.operator.reason,
                     channel=preview.operator.channel,
+                    chain_id=preview.chain_id,
                 )
             )
             await session.commit()
@@ -185,6 +187,20 @@ class SQLAlchemyStore:
             )
             await session.commit()
 
+    async def load_apply(self, apply_id: str) -> ApplyResult | None:
+        async with self._sessionmaker() as session:
+            row = await session.get(ApplyRow, apply_id)
+            if row is None:
+                return None
+            return ApplyResult(
+                status=ApplyStatus(row.status),
+                apply_id=row.apply_id,
+                action_type=row.action_type,
+                payload_hash=row.payload_hash,
+                effects=dict(row.effects or {}),
+                audit_event_id=row.audit_event_id,
+            )
+
     async def append_audit(self, event: dict[str, Any]) -> str:
         event_id = str(event.get("event_id") or new_id())
         known = {name: event.get(name) for name in _EVENT_COLUMNS}
@@ -205,6 +221,39 @@ class SQLAlchemyStore:
             await session.commit()
         return event_id
 
+    async def get_audit_event(self, event_id: str) -> dict[str, Any] | None:
+        async with self._sessionmaker() as session:
+            row = await session.get(AuditEventRow, event_id)
+            return self._event_dict(row) if row is not None else None
+
+    async def list_chain_events(self, chain_id: str) -> list[dict[str, Any]]:
+        async with self._sessionmaker() as session:
+            rows = (
+                await session.execute(
+                    select(AuditEventRow)
+                    .where(AuditEventRow.chain_id == chain_id)
+                    .order_by(AuditEventRow.created_at)
+                )
+            ).scalars().all()
+            return [self._event_dict(row) for row in rows]
+
+    @staticmethod
+    def _event_dict(row: AuditEventRow) -> dict[str, Any]:
+        event: dict[str, Any] = {
+            "event_id": row.event_id,
+            "chain_id": row.chain_id,
+            "prev_event_id": row.prev_event_id,
+            "kind": row.kind,
+            "action_type": row.action_type,
+            "operator_id": row.operator_id,
+            "reason": row.reason,
+            "channel": row.channel,
+            "payload_hash": row.payload_hash,
+            "at": row.created_at,
+        }
+        event.update(dict(row.extra or {}))
+        return event
+
     @staticmethod
     def _to_preview(row: PreviewRow) -> Preview:
         return Preview(
@@ -219,6 +268,7 @@ class SQLAlchemyStore:
             operator=OperatorContext(
                 operator_id=row.operator_id, reason=row.reason, channel=row.channel
             ),
+            chain_id=row.chain_id,
         )
 
 

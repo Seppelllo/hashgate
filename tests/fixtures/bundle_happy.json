@@ -1,0 +1,44 @@
+{
+  "bundle_format": "hashgate-oversight-bundle-v1",
+  "canon_version": "hashgate-canon-v1",
+  "chain_id": "29d8fb37f34a4620be77d5744ec0290d",
+  "action_type": "pr_merge",
+  "outcome": "applied",
+  "event_count": 2,
+  "events": [
+    {
+      "event_id": "29d8fb37f34a4620be77d5744ec0290d",
+      "chain_id": "29d8fb37f34a4620be77d5744ec0290d",
+      "prev_event_id": null,
+      "kind": "preview",
+      "action_type": "pr_merge",
+      "operator_id": "operator:alex",
+      "reason": "reviewed diff, 3 files, tests green",
+      "channel": "cockpit-ui",
+      "payload_hash": "916c06d128210f7b214dde168495fe421c2fd2b0a64ea42a957b8b9d0c35496b",
+      "canon_version": "hashgate-canon-v1",
+      "at": "2026-07-02T10:57:19.324274+00:00",
+      "preview_id": "61c6707f46834871923c9a276bc97334"
+    },
+    {
+      "event_id": "3d4d7080e7b44f8c9e19350b1c253080",
+      "chain_id": "29d8fb37f34a4620be77d5744ec0290d",
+      "prev_event_id": "29d8fb37f34a4620be77d5744ec0290d",
+      "kind": "applied",
+      "action_type": "pr_merge",
+      "operator_id": "operator:alex",
+      "reason": "reviewed diff, 3 files, tests green",
+      "channel": "cockpit-ui",
+      "payload_hash": "916c06d128210f7b214dde168495fe421c2fd2b0a64ea42a957b8b9d0c35496b",
+      "canon_version": "hashgate-canon-v1",
+      "at": "2026-07-02T10:57:19.324317+00:00",
+      "idempotency_key": "merge:acme/api:9fceb02d0ae598e95dc970b74767f19372d61af8",
+      "feature_flag": "pr_merge_enabled",
+      "policy_decision": "allow_with_gates",
+      "effects": {
+        "merged_sha": "9fceb02d0ae598e95dc970b74767f19372d61af8"
+      }
+    }
+  ],
+  "bundle_hash": "aa94c3472b30cc4114f735930395888e7eacb42f12ee2742f7265b90f1f7d33e"
+}

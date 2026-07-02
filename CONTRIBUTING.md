@@ -35,10 +35,16 @@ not just the local 3.12 pin.
 
 ## TODO (tracked for the next milestone)
 
-- [ ] CI workflow: pytest + ruff matrix over Python 3.11/3.12/3.13
-- [ ] Evidence exporter + audit-chain linkage (chain_id/prev_event_id are
-      already in the audit schema, population lands with the exporter)
-- [ ] Worked end-to-end example (PR-merge gate) in `examples/`
+- [x] CI workflow: pytest + ruff matrix over Python 3.11/3.12/3.13
+      (`.github/workflows/ci.yml` — verified on the first push to a public
+      repo, deliberately not before)
+- [x] Evidence exporter + audit-chain linkage
+- [x] Worked end-to-end example (PR-merge gate) in `examples/`
+- [ ] Fill the `TODO-owner` placeholders in `pyproject.toml` `[project.urls]`
+      when the public repository exists
+- [ ] Roadmap candidates (post-0.1): sync wrapper, real signature
+      implementations, FastAPI middleware, agent-tool gate server,
+      retention/export tooling
 
 ## Design ground rules (do not weaken)
 

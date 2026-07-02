@@ -118,3 +118,10 @@ class PreviewNotFound(HashgateError):
 
     code = "preview_not_found"
     http_status = 404
+
+
+class EvidenceNotFound(HashgateError):
+    """An oversight-bundle export referenced an unknown apply/chain/event."""
+
+    code = "evidence_not_found"
+    http_status = 404

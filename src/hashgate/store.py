@@ -59,9 +59,23 @@ class Store(Protocol):
         """Persist an apply result."""
         ...
 
+    async def load_apply(self, apply_id: str) -> ApplyResult | None:
+        """Load an apply result by id; ``None`` if unknown."""
+        ...
+
     async def append_audit(self, event: dict[str, Any]) -> str:
         """Append a REDACTED audit event (IDs + hashes only, never payload
-        bodies or secrets) and return its event_id."""
+        bodies or secrets) and return its event_id. If the event carries an
+        ``event_id`` it is honored (the gate pre-generates ids for chain
+        linkage)."""
+        ...
+
+    async def get_audit_event(self, event_id: str) -> dict[str, Any] | None:
+        """Load one audit event by id; ``None`` if unknown."""
+        ...
+
+    async def list_chain_events(self, chain_id: str) -> list[dict[str, Any]]:
+        """All audit events of one chain, in insertion order."""
         ...
 
 
@@ -105,11 +119,26 @@ class MemoryStore:
         async with self._lock:
             self._applies[result.apply_id] = result
 
+    async def load_apply(self, apply_id: str) -> ApplyResult | None:
+        async with self._lock:
+            return self._applies.get(apply_id)
+
     async def append_audit(self, event: dict[str, Any]) -> str:
         async with self._lock:
             event_id = str(event.get("event_id") or new_id())
             self._audit.append({**event, "event_id": event_id})
             return event_id
+
+    async def get_audit_event(self, event_id: str) -> dict[str, Any] | None:
+        async with self._lock:
+            for event in self._audit:
+                if event.get("event_id") == event_id:
+                    return dict(event)
+            return None
+
+    async def list_chain_events(self, chain_id: str) -> list[dict[str, Any]]:
+        async with self._lock:
+            return [dict(e) for e in self._audit if e.get("chain_id") == chain_id]
 
     # --- introspection helpers for tests/examples (not part of the protocol)
     @property

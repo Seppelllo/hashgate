@@ -111,11 +111,38 @@ async def test_apply_and_audit_roundtrip(kind: str) -> None:
          "merged_sha": "a" * 40}
     )
     assert isinstance(event_id, str) and event_id
+    apply_id = new_id()
     await store.save_apply(
-        ApplyResult(status=ApplyStatus.APPLIED, apply_id=new_id(), action_type="pr_merge",
+        ApplyResult(status=ApplyStatus.APPLIED, apply_id=apply_id, action_type="pr_merge",
                     payload_hash="b" * 64, effects={"merged_sha": "a" * 40},
                     audit_event_id=event_id)
     )
+    loaded = await store.load_apply(apply_id)
+    assert loaded is not None
+    assert loaded.status is ApplyStatus.APPLIED
+    assert loaded.effects == {"merged_sha": "a" * 40}
+    assert loaded.audit_event_id == event_id
+    assert await store.load_apply("nope") is None
+    event = await store.get_audit_event(event_id)
+    assert event is not None and event["kind"] == "applied"
+    assert await store.get_audit_event("nope") is None
+
+
+@pytest.mark.parametrize("kind", _STORES)
+async def test_chain_events_listed_per_chain(kind: str) -> None:
+    store = await _make(kind)
+    e1 = await store.append_audit(
+        {"kind": "preview", "chain_id": "c1", "prev_event_id": None,
+         "action_type": "pr_merge", "at": "2026-07-02T10:00:00+00:00"})
+    e2 = await store.append_audit(
+        {"kind": "applied", "chain_id": "c1", "prev_event_id": e1,
+         "action_type": "pr_merge", "at": "2026-07-02T10:00:01+00:00"})
+    await store.append_audit(
+        {"kind": "preview", "chain_id": "c2", "prev_event_id": None,
+         "action_type": "pr_merge", "at": "2026-07-02T10:00:02+00:00"})
+    chain = await store.list_chain_events("c1")
+    assert [e["event_id"] for e in chain] == [e1, e2]
+    assert await store.list_chain_events("nope") == []
 
 
 async def test_sqlalchemy_audit_persists_columns_and_extra() -> None:

@@ -1,6 +1,6 @@
 [project]
 name = "hashgate"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Execution governance for AI agents: preview -> canonical hash -> operator accept -> server-side re-derivation -> apply. Fail-closed, idempotent, audited."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,6 +20,13 @@ classifiers = [
 ]
 # The core is deliberately dependency-free.
 dependencies = []
+
+[project.urls]
+# placeholders until the public repository exists
+Homepage = "https://github.com/TODO-owner/hashgate"
+Repository = "https://github.com/TODO-owner/hashgate"
+Documentation = "https://github.com/TODO-owner/hashgate#readme"
+Changelog = "https://github.com/TODO-owner/hashgate/releases"
 
 [project.optional-dependencies]
 sqlalchemy = ["sqlalchemy[asyncio]>=2.0"]
