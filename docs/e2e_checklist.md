@@ -1,19 +1,25 @@
-# E2E checklist — hashgate × Claude Code (manual, operator-run)
+# E2E checklist — hashgate × Claude Code (manual release protocol)
 
-Goal: prove the full loop on a real machine with a real Claude Code session.
-Every step names what to observe. Use a THROWAWAY git repo with a remote you
-control (a second local bare repo is enough: `git init --bare /tmp/remote.git`
-+ `git remote add origin /tmp/remote.git`).
+A reusable manual release protocol: run once per release on a real machine
+with a real Claude Code session. Every step names what to observe. Use a
+THROWAWAY git repo with a remote you control (a second local bare repo is
+enough: `git init --bare /tmp/remote.git` +
+`git remote add origin /tmp/remote.git`).
 
-**Round 1 result:** fail-closed, happy path, scenario B (stale bundle), deny
-and idempotency PASSED; findings fixed in the iteration round. Round 2 covers
-the re-tests marked ⟲ below.
+**History:** Round 1 passed the core path (fail-closed proof, happy path,
+scenario B with stale bundle, deny, idempotency); its findings drove an
+iteration round. Round 2 (2026-07-02) passed all re-tests marked ⟲ below —
+TTL/expiry via the shared config, wrapper blast radius, stale reason,
+`history`, the denied-commit warning, the self-approval guard live, and
+subagent gating with `agent_context`. The ⟲ markers remain as flags for the
+historically tricky spots.
 
 ## Setup
 
 - [ ] 1. Fresh venv, **non-editable** install: `pip install '.[server]'`
-      (NOT `-e` — editable installs are broken on this platform, see
-      CONTRIBUTING.md). `hashgate --help` and `hashgate-hook-wrapper` resolve.
+      (NOT `-e` — editable installs are known-broken on some environments;
+      observed on macOS CPython 3.12/3.14, see CONTRIBUTING.md).
+      `hashgate --help` and `hashgate-hook-wrapper` resolve.
       ⟲ Editable-fix verification: run `bash scripts/verify_install.sh` — must
       print "install verification PASSED".
 - [ ] 2. **Every terminal you use below: activate the venv first.**
