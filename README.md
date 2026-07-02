@@ -159,6 +159,19 @@ redacted effect summaries — never payload bodies, never secrets (allowlist-
 first redaction is built in). Signatures are a hook (`BundleSigner`); no
 cryptography ships in v0.1.
 
+## Claude Code integration (first real consumer)
+
+`hashgate[server]` ships a local gate server + operator CLI that hooks into
+Claude Code's PreToolUse event: `git push` / `git merge` issued by the agent
+are denied until the operator approves them — hash-bound to the repository's
+**current HEAD SHA**, single-use, expiring. If the agent commits again after
+the approval, the next attempt re-derives a different hash and the stale
+approval never fires. The recommended wiring is a **fail-closed command-hook
+wrapper**: Claude Code's own hook transport is fail-open on errors; the
+wrapper turns "gate server down" into "tool call blocked" (exit 2), not into
+silence. Agent-issued `hashgate accept` commands are always denied
+(self-approval guard). Setup: [`docs/claude_code_setup.md`](docs/claude_code_setup.md).
+
 ## Canonical serialization
 
 Every guarantee hangs on the hash, so the serialization is specified
@@ -197,11 +210,12 @@ v0.1 (this repo): canonical spec + golden fixtures, Gate/GatedAction with the
 structurally pinned accept order, frozen payloads, fail-closed policy engine,
 atomic idempotency store (in-memory + async SQLAlchemy), ownership guard,
 allowlist-first redaction, audit chains + verifiable oversight bundles,
-PR-merge reference example.
+PR-merge reference example, Claude Code hook integration (gate server +
+operator CLI + fail-closed wrapper).
 
 Deliberately NOT in v0.1 (roadmap candidates): sync wrapper, real signature
-implementations, framework middleware (FastAPI), agent-tool integrations
-(e.g. a gate server for coding-agent hooks), retention/export tooling.
+implementations, framework middleware (FastAPI request-level), further
+agent-tool integrations, retention/export tooling.
 
 ## License
 

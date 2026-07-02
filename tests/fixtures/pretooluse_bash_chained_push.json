@@ -1,0 +1,10 @@
+{
+  "session_id": "abc123def456",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "uv run pytest -q && git add -A && git commit -m 'fix' && git push",
+    "description": "Test, commit and push"
+  }
+}

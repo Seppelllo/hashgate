@@ -30,6 +30,17 @@ Changelog = "https://github.com/TODO-owner/hashgate/releases"
 
 [project.optional-dependencies]
 sqlalchemy = ["sqlalchemy[asyncio]>=2.0"]
+server = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",
+]
+
+[project.scripts]
+hashgate = "hashgate.integrations.claude_code.cli:main"
+hashgate-hook-server = "hashgate.integrations.claude_code.server:main"
+hashgate-hook-wrapper = "hashgate.integrations.claude_code.hook_wrapper:main"
 
 [dependency-groups]
 dev = [
@@ -38,6 +49,9 @@ dev = [
     "aiosqlite>=0.20",
     "sqlalchemy[asyncio]>=2.0",
     "ruff>=0.6",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "httpx>=0.27",
 ]
 
 [build-system]

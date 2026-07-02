@@ -1,0 +1,10 @@
+{
+  "session_id": "abc123def456",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/tmp/example-repo/notes.md",
+    "content": "git push is mentioned here"
+  }
+}

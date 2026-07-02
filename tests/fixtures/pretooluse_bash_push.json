@@ -1,0 +1,11 @@
+{
+  "session_id": "abc123def456",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git push origin main",
+    "description": "Push the feature branch"
+  }
+}

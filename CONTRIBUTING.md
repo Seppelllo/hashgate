@@ -42,9 +42,11 @@ not just the local 3.12 pin.
 - [x] Worked end-to-end example (PR-merge gate) in `examples/`
 - [ ] Fill the `TODO-owner` placeholders in `pyproject.toml` `[project.urls]`
       when the public repository exists
+- [x] First real consumer: Claude Code PreToolUse gate
+      (`hashgate[server]` — server, operator CLI, fail-closed wrapper)
 - [ ] Roadmap candidates (post-0.1): sync wrapper, real signature
-      implementations, FastAPI middleware, agent-tool gate server,
-      retention/export tooling
+      implementations, FastAPI request-level middleware, further agent-tool
+      integrations, retention/export tooling
 
 ## Design ground rules (do not weaken)
 

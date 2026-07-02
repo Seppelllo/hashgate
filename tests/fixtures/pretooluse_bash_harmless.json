@@ -1,0 +1,10 @@
+{
+  "session_id": "abc123def456",
+  "cwd": "/tmp/example-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git status --short",
+    "description": "Show working tree status"
+  }
+}
