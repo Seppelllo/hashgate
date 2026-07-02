@@ -5,7 +5,7 @@
 {% if ok %}<p class="flash ok">{{ ok }}</p>{% endif %}
 {% if err %}<p class="flash err">{{ err }}</p>{% endif %}
 
-<section class="card">
+<section class="card {{ severity(row.action_type) }}">
   <code class="cmd big">{{ payload.get("command", "") }}</code>
   {% if summary %}
   <div class="summary">
@@ -44,6 +44,7 @@
     <input id="hash_prefix" name="hash_prefix" inputmode="text"
            autocomplete="off" spellcheck="false" pattern="[0-9a-fA-F]{{ '{' }}{{ prefix_len }}{{ '}' }}"
            class="mono" placeholder="{{ prefix_len }} hex characters">
+    <p class="echo-state" id="echo-state"></p>
     <label for="accept-reason">reason (optional)</label>
     <input id="accept-reason" name="reason" autocomplete="off">
     <button type="submit" class="primary">Approve (single-use)</button>
@@ -72,6 +73,32 @@
 {% endif %}
 
 <script>
+(function () {
+  // display-only echo feedback: the server stays the authority; nothing is
+  // auto-filled — the operator still types every character
+  var input = document.getElementById("hash_prefix");
+  if (!input) return;
+  var expected = document.getElementById("full-hash")
+    .textContent.trim().slice(0, {{ prefix_len }});
+  var state = document.getElementById("echo-state");
+  input.addEventListener("input", function () {
+    var typed = input.value.trim().toLowerCase();
+    input.classList.remove("echo-ok", "echo-bad");
+    state.classList.remove("ok", "bad");
+    if (!typed) { state.textContent = ""; return; }
+    if (expected.indexOf(typed) === 0) {
+      if (typed.length === {{ prefix_len }}) {
+        input.classList.add("echo-ok"); state.classList.add("ok");
+        state.textContent = "{{ prefix_len }}/{{ prefix_len }} — matches the hash above";
+      } else {
+        state.textContent = typed.length + "/{{ prefix_len }}";
+      }
+    } else {
+      input.classList.add("echo-bad"); state.classList.add("bad");
+      state.textContent = "does not match the hash above";
+    }
+  });
+})();
 document.getElementById("copy-hash").addEventListener("click", function () {
   navigator.clipboard.writeText(document.getElementById("full-hash").textContent.trim());
   this.textContent = "Copied";

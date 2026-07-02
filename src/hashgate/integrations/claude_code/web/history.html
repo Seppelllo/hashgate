@@ -6,7 +6,7 @@
 <ul class="history">
   {% for e in entries %}
   <li>
-    <a href="/ui/preview/{{ e.preview_id }}" class="card link">
+    <a href="/ui/preview/{{ e.preview_id }}" class="card link {{ severity(e.action_type) }}">
       <div class="row-head">
         <span class="action">{{ e.action_type }}</span>
         <span class="outcome outcome-{{ e.outcome }}">{{ e.outcome }}</span>

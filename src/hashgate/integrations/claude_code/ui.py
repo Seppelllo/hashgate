@@ -76,7 +76,17 @@ def register_ui(app: FastAPI, state: Any) -> None:  # noqa: C901
         loader=FileSystemLoader(_WEB_DIR),
         autoescape=select_autoescape(["html"]),
     )
-    env.globals.update(age=age, expiry=expiry, local_time=local_time, short=short)
+    def severity(action_type: str) -> str:
+        """Docket-edge color class: destructive red, deploys amber, git blue."""
+        if action_type in ("git_force_push", "git_reset_hard", "rm_rf"):
+            return "sev-danger"
+        if action_type in ("kamal_deploy", "docker_compose_up",
+                           "kubectl_apply", "deploy_script"):
+            return "sev-deploy"
+        return "sev-git"
+
+    env.globals.update(age=age, expiry=expiry, local_time=local_time,
+                       short=short, severity=severity)
     sessions: dict[str, str] = {}  # session id -> csrf token
     state.ui_sessions = sessions
 

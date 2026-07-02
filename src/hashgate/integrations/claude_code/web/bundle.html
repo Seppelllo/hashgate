@@ -8,7 +8,7 @@
 <a class="primary button" href="/ui/bundle/{{ chain_id }}?download=1">Download bundle JSON</a>
 <ol class="timeline">
   {% for e in events %}
-  <li class="card">
+  <li class="card kind-{{ e.kind }}">
     <div class="row-head">
       <span class="action">{{ e.kind }}</span>
       <span class="age">{{ local_time(e.at) }}</span>

@@ -2,7 +2,7 @@
 <ul class="pending">
   {% for row in rows %}
   <li>
-    <a href="/ui/preview/{{ row.preview_id }}" class="card link">
+    <a href="/ui/preview/{{ row.preview_id }}" class="card link {{ severity(row.action_type) }}">
       <div class="row-head">
         <span class="action">{{ row.action_type }}</span>
         <span class="age">{{ row.age }} ago</span>
