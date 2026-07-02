@@ -19,11 +19,12 @@ source file changes — the dev loop stays "edit, run" (verified: an edited
 `__version__` shows up on the next `uv run`).
 
 For pip users: **`pip install '.[server]'` — NOT `pip install -e`.** Editable
-installs are known-broken on this platform (below).
+installs are known-broken in the environments we tested (below).
 
 ## Known pitfall: editable installs silently broken (underscore `.pth` skip)
 
-Observed reproducibly on CPython 3.12.12 and 3.14.3 in this environment: the
+Observed reproducibly on macOS with CPython 3.12.12 and 3.14.3; likely
+environment-dependent — Linux/other setups may be unaffected. There, the
 `site` module does not process `.pth` files whose names start with an
 underscore (a byte-identical copy under a non-underscore name IS processed).
 PEP-660 editable installs write underscore-prefixed `.pth` files (hatchling:
@@ -44,9 +45,10 @@ mechanics at all. If imports break after toolchain changes, look at the
 
 ## Supported Python versions
 
-The package claims 3.11–3.13 (classifiers). TODO before the first release:
-CI matrix across 3.11 / 3.12 / 3.13 so the claim is backed by green runs,
-not just the local 3.12 pin.
+The package claims 3.11–3.13 (classifiers). The CI matrix over
+3.11/3.12/3.13 exists (`.github/workflows/ci.yml`); its first verified run
+happens on the first push to the public repository — until then the claim is
+backed locally by the 3.12 pin only.
 
 ## TODO (tracked for the next milestone)
 
@@ -55,8 +57,8 @@ not just the local 3.12 pin.
       repo, deliberately not before)
 - [x] Evidence exporter + audit-chain linkage
 - [x] Worked end-to-end example (PR-merge gate) in `examples/`
-- [ ] Fill the `TODO-owner` placeholders in `pyproject.toml` `[project.urls]`
-      when the public repository exists
+- [x] Fill the `TODO-owner` placeholders in `pyproject.toml` `[project.urls]`
+      (done — they point at the public repository)
 - [x] First real consumer: Claude Code PreToolUse gate
       (`hashgate[server]` — server, operator CLI, fail-closed wrapper)
 - [ ] Roadmap candidates (post-0.1): sync wrapper, real signature
