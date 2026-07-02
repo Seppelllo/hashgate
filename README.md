@@ -221,7 +221,8 @@ order; golden fixtures freeze the canonical format and the bundle format.
 
 Roadmap candidates: self-hosted web UI for approvals, FastAPI middleware,
 sync wrapper on demand, more gated action types beyond git push/merge,
-`deny --final`, signature implementations for bundle sealing.
+`deny --final`, signature implementations for bundle sealing,
+retention/export tooling.
 
 ## Sponsoring & integration work
 

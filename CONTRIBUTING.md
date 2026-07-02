@@ -61,9 +61,9 @@ backed locally by the 3.12 pin only.
       (done — they point at the public repository)
 - [x] First real consumer: Claude Code PreToolUse gate
       (`hashgate[server]` — server, operator CLI, fail-closed wrapper)
-- [ ] Roadmap candidates (post-0.1): sync wrapper, real signature
-      implementations, FastAPI request-level middleware, further agent-tool
-      integrations, retention/export tooling
+
+Roadmap candidates live in the README (Status & roadmap section); once the
+repository is public, larger items move to GitHub issues.
 
 ## Design ground rules (do not weaken)
 
