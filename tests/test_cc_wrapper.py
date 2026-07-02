@@ -28,7 +28,10 @@ def _run(stdin: str, env_extra: dict) -> subprocess.CompletedProcess:
         [sys.executable, str(_WRAPPER)],
         input=stdin, capture_output=True, text=True, timeout=30,
         env={"PATH": "/usr/bin:/bin", "PYTHONPATH": _SRC,
-             "HASHGATE_WRAPPER_TIMEOUT": "2", **env_extra},
+             "HASHGATE_WRAPPER_TIMEOUT": "2",
+             # hermetic: never read the developer's real ~/.hashgate config
+             "HASHGATE_CONFIG": "/nonexistent/hashgate-config.toml",
+             **env_extra},
     )
 
 
@@ -121,4 +124,52 @@ def test_non_2xx_blocks_gated_but_passes_harmless() -> None:
     finally:
         server.shutdown()
     assert gated.returncode == 2 and "401" in gated.stderr
+    # field finding: a bare "HTTP 401" sent the operator hunting — the reason
+    # now names the actual cause and where both sides read the token
+    assert "token mismatch between wrapper and server" in gated.stderr
+    assert "config.toml" in gated.stderr
+    assert harmless.returncode == 0 and harmless.stdout == "{}"
+
+
+def test_wrapper_reads_token_from_shared_config(tmp_path) -> None:
+    # field finding: token set in config.toml governed the server but the
+    # wrapper read env only => 401 on every gated action. One shared source
+    # now: config.toml token reaches the wrapper without any env variable.
+    config = tmp_path / "config.toml"
+    config.write_text('token = "from-config-file"\n')
+    server, port = _serve(_FakeGate)
+    try:
+        proc = _run(_event("git push"), {
+            "HASHGATE_SERVER_URL": f"http://127.0.0.1:{port}/hooks/pretooluse",
+            "HASHGATE_CONFIG": str(config),   # note: NO HASHGATE_TOKEN env
+        })
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0
+    assert _FakeGate.seen_token[-1] == "from-config-file"
+
+
+def test_env_token_overrides_config_for_the_wrapper(tmp_path) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text('token = "from-config-file"\n')
+    server, port = _serve(_FakeGate)
+    try:
+        proc = _run(_event("git push"), {
+            "HASHGATE_SERVER_URL": f"http://127.0.0.1:{port}/hooks/pretooluse",
+            "HASHGATE_CONFIG": str(config),
+            "HASHGATE_TOKEN": "env-wins",
+        })
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0
+    assert _FakeGate.seen_token[-1] == "env-wins"
+
+
+def test_broken_config_blocks_gated_passes_harmless(tmp_path) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text("token = unquoted\n")  # invalid TOML
+    gated = _run(_event("git push"), {"HASHGATE_CONFIG": str(config)})
+    assert gated.returncode == 2
+    assert "config error" in gated.stderr
+    harmless = _run(_event("ls"), {"HASHGATE_CONFIG": str(config)})
     assert harmless.returncode == 0 and harmless.stdout == "{}"

@@ -89,6 +89,12 @@ your venv, so a bare `hashgate-hook-wrapper` usually does not resolve:
 }
 ```
 
+The wrapper reads the hook token and port from the SAME shared config as
+server and CLI (`~/.hashgate/config.toml`; env still overrides) — you do not
+need to export `HASHGATE_TOKEN` into Claude Code's environment. Since the
+wrapper runs fresh per hook call, a config change applies to the next tool
+call immediately, no Claude Code restart required.
+
 Why user settings instead of the project's `.claude/settings.json`: the agent
 can EDIT project files — including project settings — and would thereby be
 able to unhook its own gate. User-level (or managed) settings live outside

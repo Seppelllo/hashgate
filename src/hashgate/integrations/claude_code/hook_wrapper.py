@@ -20,11 +20,15 @@ This wrapper inverts the semantics — with the RIGHT blast radius:
   anything).
 
 No third-party imports — only the standard library plus the package's own
-rules module (same installation).
+rules and config modules (same installation; the config module is
+tomllib-based and stdlib-only).
 
-Environment:
-    HASHGATE_SERVER_URL       default http://127.0.0.1:8377/hooks/pretooluse
-    HASHGATE_TOKEN            optional shared secret (sent as X-Hashgate-Token)
+Configuration: the wrapper reads the SAME shared source as server and CLI
+(env > ~/.hashgate/config.toml > default) for the hook token and the port —
+no environment juggling required. Overrides:
+    HASHGATE_SERVER_URL       full endpoint URL (else port from the config)
+    HASHGATE_TOKEN            hook token override (else 'token' from config)
+    HASHGATE_CONFIG           alternate config file path
     HASHGATE_WRAPPER_TIMEOUT  seconds, default 10
 """
 from __future__ import annotations
@@ -35,6 +39,7 @@ import sys
 import urllib.error
 import urllib.request
 
+from hashgate.integrations.claude_code.config import GateConfigError, load_config
 from hashgate.integrations.claude_code.rules import classify
 
 DEFAULT_URL = "http://127.0.0.1:8377/hooks/pretooluse"
@@ -63,12 +68,30 @@ def run(stdin_data: str) -> int:
               file=sys.stderr)
         return BLOCK_EXIT_CODE
 
-    url = os.environ.get("HASHGATE_SERVER_URL", DEFAULT_URL)
+    # the wrapper reads the SAME shared config as server and CLI (env >
+    # config.toml > default) — a token set in config.toml therefore reaches
+    # the wrapper without any environment juggling. Field finding: env-only
+    # token reading produced 401s the moment the server got its token from
+    # the file. The wrapper is a fresh process per hook call, so config
+    # changes apply immediately.
+    try:
+        cfg = load_config()
+        token, port = cfg.token, cfg.port
+    except GateConfigError as exc:
+        return _fail_closed_or_open(event, f"config error: {exc}")
+    url = os.environ.get("HASHGATE_SERVER_URL") \
+        or f"http://127.0.0.1:{port}/hooks/pretooluse"
     timeout = float(os.environ.get("HASHGATE_WRAPPER_TIMEOUT", "10"))
     headers = {"Content-Type": "application/json"}
-    token = os.environ.get("HASHGATE_TOKEN")
     if token:
         headers["X-Hashgate-Token"] = token
+
+    def status_reason(status: int) -> str:
+        if status == 401:
+            return ("HTTP 401 — token mismatch between wrapper and server; "
+                    "check 'token' in ~/.hashgate/config.toml (both read it) "
+                    "or a stale HASHGATE_TOKEN override in the environment")
+        return f"HTTP {status}"
 
     request = urllib.request.Request(
         url, data=stdin_data.encode(), headers=headers, method="POST")
@@ -78,9 +101,9 @@ def run(stdin_data: str) -> int:
             if 200 <= response.status < 300:
                 sys.stdout.write(body)
                 return 0
-            return _fail_closed_or_open(event, f"HTTP {response.status}")
+            return _fail_closed_or_open(event, status_reason(response.status))
     except urllib.error.HTTPError as exc:  # non-2xx raises in urllib
-        return _fail_closed_or_open(event, f"HTTP {exc.code}")
+        return _fail_closed_or_open(event, status_reason(exc.code))
     except Exception as exc:  # connection refused, timeout, DNS, …
         return _fail_closed_or_open(event, str(exc))
 
