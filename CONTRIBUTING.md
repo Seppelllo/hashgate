@@ -65,6 +65,20 @@ backed locally by the 3.12 pin only.
 Roadmap candidates live in the README (Status & roadmap section); once the
 repository is public, larger items move to GitHub issues.
 
+## Releasing
+
+1. Bump `version` in `pyproject.toml`, commit, push, wait for green CI.
+2. Create and push a tag `vX.Y.Z` (or a GitHub release with that tag). The
+   release workflow (`.github/workflows/release.yml`) re-runs the test
+   matrix at the tag, guards that the tag matches the pyproject version,
+   builds, and publishes to PyPI via Trusted Publishing (OIDC — no tokens
+   in the repo).
+3. PyPI uploads are immutable: a bad release gets yanked and replaced by a
+   patch version, never overwritten.
+4. One-time prerequisite (maintained manually on pypi.org, not in the
+   repo): the Trusted Publisher must be registered — owner `Seppelllo`,
+   repo `hashgate`, workflow `release.yml`, environment `pypi`.
+
 ## Design ground rules (do not weaken)
 
 - No auto-accept, no scheduler in the core. hashgate gates; it never executes
